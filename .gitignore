@@ -1,0 +1,15 @@
+# 构建产物
+/build/
+build/
+*.user
+*.suo
+*.VC.db
+.vs/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+
+# 临时
+*.log
+.env
