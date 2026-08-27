@@ -58,3 +58,6 @@ if(FORGECAD_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# ---- 临时验证：练习代码（验证后删除）----
+add_executable(memory_lesson practice/day1/memory_lesson.cpp)
