@@ -16,3 +16,7 @@ CMakeFiles/
 
 # 练习代码（不进 Git 历史）
 practice/
+
+# CLion ����
+.idea/
+cmake-build-*/
