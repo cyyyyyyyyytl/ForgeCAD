@@ -66,3 +66,10 @@ add_executable(polymorphism practice/day1/polymorphism.cpp)
 
 add_executable(parameter_demo practice/day1/parameter_demo.cpp)
 target_include_directories(parameter_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# 注意：.h 只声明，.cpp 才实现——实现文件必须写进 add_executable，否则 LNK2019
+add_executable(box_demo
+    practice/day1/box_demo.cpp
+    src/domain/BoxFeature.cpp
+)
+target_include_directories(box_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
