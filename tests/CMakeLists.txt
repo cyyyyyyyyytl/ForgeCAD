@@ -2,7 +2,7 @@
 enable_testing()
 
 file(GLOB TEST_SOURCES CONFIGURE_DEPENDS
-    test_main.cpp
+    *.cpp
 )
 add_executable(forgecad_tests ${TEST_SOURCES})
 target_link_libraries(forgecad_tests PRIVATE

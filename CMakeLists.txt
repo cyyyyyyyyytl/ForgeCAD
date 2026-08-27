@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# MSVC 下强制以 UTF-8 解析源码：否则中文注释会被按 GBK 读取，触发 C4819 并导致语法错乱
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # 输出目录统一
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)

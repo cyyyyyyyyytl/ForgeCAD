@@ -12,8 +12,11 @@
 
 ## 构建（Windows + MSVC + vcpkg）
 ```powershell
-# 1. 配置（指定 vcpkg 工具链；Qt 通过 CMAKE_PREFIX_PATH 指定）
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+# 已有 build 目录时，直接增量编译即可（CMakeLists 变更会自动重新配置）：
+cmake --build build --config Release
+
+# 全新配置（指定 vcpkg 工具链；Qt 通过 CMAKE_PREFIX_PATH 指定）
+cmake -S . -B build -G "Visual Studio 18 2026" -A x64 `
   -DCMAKE_TOOLCHAIN_FILE=C:/Users/15389/vcpkg/scripts/buildsystems/vcpkg.cmake `
   -DCMAKE_PREFIX_PATH=D:/Qt/6.11.2/msvc2022_64
 
@@ -26,6 +29,8 @@ cmake --build build --config Release
 # 4. 测试
 ctest --test-dir build -C Release
 ```
+
+> 注意：本机只装了 Visual Studio 2026（工具集 v180），全新配置时生成器必须写 `Visual Studio 18 2026`；写 `17 2022` 会报 MSB8020（找不到 v143 工具集）。
 
 ## 模块
 - `src/core` 核心基础设施（Result/Error/Logger/Version）
