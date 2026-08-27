@@ -8,6 +8,48 @@
 
 ---
 
+## 2026-08-27（教学会话：Day 1 毕业 + Day 2 开始 + IDE 环境）
+
+### 重大变化：教学模式切换
+- 用户要求"你带我学，别自己在后台跑" → 已暂停自动轮次（goal paused），**转为对话内交互教学**：我讲→用户动手→我检查→编译运行。
+- 用户此前未读文档，Day 1 全部在对话内完成。
+
+### 已完成（交互教学成果）
+1. **Day 1 核心全部讲完并验证**：
+   - 内存泄漏/RAII/智能指针概念（`unique_ptr`/`shared_ptr`/`weak_ptr` 一句话版）
+   - 多态 + 虚函数 + **虚析构**（用户自写 Rectangle/Circle 版，升级到 `make_unique` 版，编译运行通过）
+   - 用户第一次亲手编译运行 C++ 程序 ✅（学了 cmd 的 `cd /d` 跨盘坑）
+2. **真实项目第一行代码**：`src/domain/Parameter.h`（用户建骨架 + 填空，我补 variant/异常部分，逐行讲解）→ `parameter_demo` 编译运行验证 4 种行为全对
+   - 用户的 `Parameter.cpp` 空壳已删除（纯头文件类不需要 .cpp；CLion 新建类向导默认生成，注意取消）
+3. **工程环境（重要）**：
+   - **Device Guard 策略**：裸 `cl` 编译的 exe 被拦，CMake 构建的能跑 → 统一用 CMake 构建（用户机器同样生效）
+   - **CMakePresets.json 建立**：`vs2026-release`（VS 18 2026 + vcpkg 工具链 + Qt 路径 + 测试开）→ build 目录已用 preset 重建并验证（forgecad.exe + memory_lesson/polymorphism/parameter_demo + 3/3 测试）
+   - 练习目标（memory_lesson/polymorphism/parameter_demo）挂根 CMakeLists，源码在 `practice/day1/`（gitignored）
+   - `.idea/`（CLion 配置）已 gitignore；`.gitignore` 曾混编码损坏，已重写为纯 UTF-8
+
+### 用户环境事实
+- 用户用 **CLion**（报红）→ 根因：CLion 默认 MinGW 工具链 + 未配 vcpkg → Qt/OCCT REQUIRED 找不到 → 配置失败全红。已给出两种方案：推荐 **VS 2026 打开文件夹**（零配置）；CLion 需配 VS 工具链 + 选 vs2026-release preset
+
+### 待办（用户）
+- 📌 **Feature.h**（填空版已给全代码框架，用户敲入 `src/domain/`）：抽象基类 + 纯虚函数 + 虚析构，继承 Parameter
+- 之后：BoxFeature（具体类）、FeatureFactory（工厂）→ 6 个单测 → Day 3（依赖图，用户写算法实现）
+
+### 下一步（交接点）
+1. 检查 Feature.h → 编译验证 → BoxFeature → FeatureFactory
+2. 写 tests（day2 测试文件抄自 `docs/day2-stl-templates-design-patterns.md` 第 5 节）
+3. 面试题抽查 Day 1 概念（RAII/智能指针/虚析构）
+4. 之后：Day 3 依赖图（教材已备好）
+
+### Git 状态
+```
+4004bdb chore: gitignore 重写为纯 UTF-8（修复混编码）；删除空 Parameter.cpp
+f65a7e5 Day2: Parameter.h（教学共创）；CMakePresets（vcpkg+Qt 工具链一键配置，VS/CLion 通用）；练习目标...
+4416f39 练习脚手架：memory_lesson 目标（CMake 构建可绕过裸 cl 的 Device Guard 拦截）；practice/ 入 gitignore
+fa374de docs: Day4 教材(Command+Undo/Redo，修正悬垂指针 bug)；日志: 第3轮
+```
+
+---
+
 ## 2026-08-27（第 3 轮：教学推进日 2）—— Day4 教材完成，Day2+3+4 全量验证通过
 
 ### 已完成
