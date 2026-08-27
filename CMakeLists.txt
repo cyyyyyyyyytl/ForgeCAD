@@ -59,5 +59,10 @@ if(FORGECAD_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
-# ---- ÁÙÊ±ÑéÖ¤£ºÁ·Ï°´úÂë£¨ÑéÖ¤ºóÉ¾³ı£©----
+# ---- ç»ƒä¹ ä»£ç ç›®æ ‡ï¼ˆpractice/ ç›®å½•ï¼Œä¸è¿› Gitï¼‰----
 add_executable(memory_lesson practice/day1/memory_lesson.cpp)
+
+add_executable(polymorphism practice/day1/polymorphism.cpp)
+
+add_executable(parameter_demo practice/day1/parameter_demo.cpp)
+target_include_directories(parameter_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
