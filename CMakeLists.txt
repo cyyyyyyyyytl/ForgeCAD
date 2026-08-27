@@ -40,6 +40,14 @@ set(OCCT_LIBRARIES
     TKernel
     TKDESTEP
     TKXSBase
+    # ---- W3/W4 几何与 3D 视图所需（vcpkg 已验证存在）----
+    TKBO        # 布尔运算 BRepAlgoAPI_Fuse/Cut/Common
+    TKFillet    # Fillet / Chamfer
+    TKOffset    # 偏移 / 管道等构造
+    TKXCAF      # XCAF 文档（STEP 元数据）
+    TKV3d       # 3D 视图核心（AIS）
+    TKService   # 图形服务（视图上下文）
+    TKOpenGl    # OpenGL 图形驱动
 )
 
 # ---- 子目录/库 ----

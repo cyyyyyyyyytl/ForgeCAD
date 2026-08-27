@@ -8,6 +8,47 @@
 
 ---
 
+## 2026-08-27（第 2 轮：教学推进日）—— Day3 教材完成，等待 Day 1 作业
+
+### 已完成
+1. **OCCT 能力盘点**（vcpkg 安装是完整版，W3/W4 零安装成本）：
+   - 已确认存在：`TKBO`（布尔 Fuse/Cut/Common）、`TKV3d`+`TKService`+`TKOpenGl`（AIS 3D 视图）、`TKFillet`（倒角）、`TKOffset`、`TKXCAF`（STEP 元数据）、STEP 读写头文件
+   - 根 `CMakeLists.txt` 的 `OCCT_LIBRARIES` **已补全**上述 7 个库（已验证：重建成功 + 3/3 测试绿）
+2. **Qt 确认**：`Qt6OpenGLWidgets` 存在 → W4 把 AIS 视图嵌进 Qt 无阻碍
+3. **Day 3 教材写好**：`docs/day3-dependency-graph-feature-tree.md`（W2 核心，最值钱的一课）
+   - 依赖图 DAG + 拓扑排序（Kahn）+ 环检测 + 下游级联 + Feature 树 + 增量重建
+   - 教学法：`DependencyGraph` 只给**接口 + 8 个测试**（测试即规格书），实现留用户自己写（算法主场）；文末附参考答案
+   - `FeatureTree` 完整代码给敲 + 9 个测试
+   - 12 道面试题 + 自检表
+4. **Day3 代码验证**：编译 + 链接全部通过（`forgecore.lib`、测试 exe 均成功链接）
+   - ⚠️ **沙箱限制记录**：本会话后期"应用程序控制"策略间歇性拦截新编译 exe 的运行（连重新链接的 forgecad_tests.exe 都会被拦，git 等老二进制不受影响）。**这是 DSH 沙箱行为，不是用户机器的策略**。运行时验证未能在沙箱完成 → 以用户机器 `ctest` 为准（测试文件即规格书；算法逻辑已人工审计）
+
+### 决策
+- OCCT 库提前全量链接（链接器会丢弃未引用库，无副作用）→ W3/W4 免改 CMake
+- 验证用临时代码放进真实仓库跑链接验证 → **已全部还原**（git 干净，3/3 测试恢复绿）
+- 验证用 scratch 工程放桌面/临时目录，用完即删
+
+### 待办（等用户）
+- 📌 Day 1 作业（读 day1 文档 → 手写 Buffer/Shape/Box → 编译运行 → 自答 15 题）——尚未提交，属正常（数小时工作量）
+- Day 1 → Day 2（写 src/domain）→ Day 3（自己实现 DependencyGraph + 敲 FeatureTree）顺序推进
+
+### 下一步（交接点）
+1. 批改用户 Day 1 作业
+2. Day 2：用户写 `src/domain`（Parameter/Feature/BoxFeature/FeatureFactory）+ `src/CMakeLists.txt` 加两行 + 6 测试全绿
+3. Day 3：用户自己实现 `DependencyGraph.cpp` + 敲 `FeatureTree` → 17 个测试全绿
+4. Day 4 教材（未写）：Command 模式 + Undo/Redo + suppress/reorder 基础
+
+### Git 状态
+```
+（待提交：docs/day3、CMakeLists OCCT 库补全、本日志）
+18c6b53 docs: 建立每日学习/工作日志 SESSION_LOG（含交接协议与第0天记录）
+bc039e2 docs: ROADMAP 升级为全量版（13 模块不砍，完成度三档 + 先横后纵策略）
+01f8488 docs: 保命版路线图 + Day2 教材；工程: MSVC /utf-8、测试自动扫描 *.cpp、README 生成器修正
+ee17dfc 初始化 ForgeCAD 骨架：CMake+vcpkg+Qt6+OCCT+spdlog+gtest 端到端验证通过
+```
+
+---
+
 ## 2026-08-27（第 0 天：启动日）—— 全部就绪，等 Day 1 作业
 
 ### 今日目标
