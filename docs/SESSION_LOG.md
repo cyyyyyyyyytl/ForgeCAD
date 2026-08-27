@@ -8,6 +8,44 @@
 
 ---
 
+## 2026-08-27（第 3 轮：教学推进日 2）—— Day4 教材完成，Day2+3+4 全量验证通过
+
+### 已完成
+1. **Day 4 教材**：`docs/day4-command-undo-redo.md` —— Command 模式 + Undo/Redo
+   - 双栈 `CommandManager`（execute/undo/redo）+ 3 个具体命令（Add/Delete/ModifyParameter）+ 所有权流转讲解
+   - 9 个测试 + 12 面试题 + 挑战题（Feature reorder）
+2. **全量验证（本轮最大成果）**：Day2+3+4 全部代码**临时**放入真实仓库 → **编译 + 链接 + 29/29 测试全绿**（3 原有 + 8 依赖图 + 9 Feature 树 + 9 命令）→ 验证后**全部还原**，仓库恢复 3/3 干净状态，无残留
+   - 说明：`src/application/` 目录验证后已删除（原骨架没有此目录，用户写 Day4 时自行创建）
+3. **抓到一个真实 bug（教材第 1 版，被测试抓出）**：失败命令不入栈 → `execute(std::move(cmd))` 结束时命令对象被 unique_ptr 销毁 → 测试里保留的 `cmd.get()` 裸指针成**悬垂指针** → SEH 0xc0000005 崩溃
+   - 修正：`CommandManager::execute` 改为**返回 bool**（成功/失败），调用方立刻知道结果，不再需要裸指针
+   - 教材已同步修正，并把此案例写成"真实教训"教学点（这是最好的面试故事素材）
+4. 用户仍未交 Day 1 作业（Day 1 需数小时，正常）
+
+### 决策
+- `execute()` 返回 bool 优于 void + failed() 裸指针查询（生命周期安全、调用方即时感知）
+- 验证通道结论：临时文件放入真实仓库跑 ctest 是可靠通道（沙箱"应用程序控制"拦截新 exe 为间歇性，本次全部跑通）；验证后必须还原
+
+### 待办（等用户，顺序不变）
+- Day 1 → Day 2 → Day 3 → Day 4 顺序推进
+- 每步验收即测试全绿；**累计 29 个测试的规格书已全部备好**（day3/day4 测试文件在教材文档里，用户抄入 `tests/` 即可）
+
+### 下一步（交接点）
+1. 批改用户 Day 1 作业
+2. 用户按 Day2/3/4 教材写代码（写完 `src/CMakeLists.txt` 加对应 .cpp 行）
+3. 下一份教材：**Day 5 —— 3D 数学 + OCCT 几何内核（W3 开始）**：向量/矩阵/坐标变换 + ShapeFactory 补全（7 基本体 + Extrude/Revolve/Transform）+ Boolean（TKBO）+ 分析（体积/包围盒）；OCCT 库已全部预链接（上轮）
+
+### Git 状态
+```
+（待提交：docs/day4、本日志）
+33cfb32 docs: Day3 教材(依赖图+Feature树+增量重建)；工程: OCCT 库补全(W3/W4 用)；日志: 第2轮
+18c6b53 docs: 建立每日学习/工作日志 SESSION_LOG（含交接协议与第0天记录）
+bc039e2 docs: ROADMAP 升级为全量版（13 模块不砍，完成度三档 + 先横后纵策略）
+01f8488 docs: 保命版路线图 + Day2 教材；工程: MSVC /utf-8、测试自动扫描 *.cpp、README 生成器修正
+ee17dfc 初始化 ForgeCAD 骨架：CMake+vcpkg+Qt6+OCCT+spdlog+gtest 端到端验证通过
+```
+
+---
+
 ## 2026-08-27（第 2 轮：教学推进日）—— Day3 教材完成，等待 Day 1 作业
 
 ### 已完成
