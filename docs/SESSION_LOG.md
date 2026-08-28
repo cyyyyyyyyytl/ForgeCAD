@@ -9,6 +9,45 @@
 
 ---
 
+## 2026-08-28（环境重装 + Day2 强化 + 3D 视图上线）
+
+### 环境重装（本机全新配置，全部完成）
+- **工具链**：Git 2.55、Python 3.13、vcpkg（gitee 镜像克隆）、Qt 6.11.2 MSVC2022 x64（aqt 下载 2.16GB → `D:\Qt`）、OCCT 8.0.1 + spdlog + fmt + gtest + sqlite3 + nlohmann-json（vcpkg 编译 37min）
+- **D 盘权限修复**：`D:\ForgeCAD` / `D:\Qt` ACL 原来只有 Users 只读 → 用户确认 UAC 后 icacls 授权 FullControl（不修则 CMake 无法建 build 目录）
+- **Git 历史接回**：本地 .git 丢失（换机）→ git init + fetch origin/master + 复用云端 .git → 14 个历史提交完整保留 + 新增同步提交，已 push
+- **端到端验证**：CMake 配置 0.8s 成功 + Release 构建 + ctest 3/3 全绿
+
+### Day 2 强化（抽查 3 题全对）
+- 虚析构为什么（delete 基类指针只调基类析构→子类泄漏）；Parameter/Feature 组合关系；两个 const 含义
+- **BoxFeature 接进工程**：`src/CMakeLists.txt` 注册 `domain/BoxFeature.cpp`（用户亲手改 ✅）→ 之前写了但没编译进库
+- **BoxFeature 测试 8 个**（test_box_feature.cpp）：构造/参数列表/改参数/改未知参数抛异常/校验合法/校验负数/校验零/重建 → **11/11 全绿**
+
+### 3D 视图上线（今天最大成果，踩坑 4 个）
+- 新增 `src/ui/Viewport3D.h/.cpp`（QWidget 子类），main.cpp 集成，Box 显示为 3D 模型
+- 踩坑记录（面试金矿）：
+  1. **白屏**：构造函数里 winId() 太早，句柄未定 → 移到 showEvent
+  2. **视图消失/不主动显示**：OCCT NeutralWindow 画面被 Qt 覆盖，无后台刷新 → **QTimer 33ms 直接调 view_->Redraw()**（官方 OcctQtViewer 同款）
+  3. **闪烁**：定时器 update() + paintEvent 双路径重绘 → paintEvent 留空，只走定时器单一路径
+  4. **中心缩放**：SetZoom 以屏幕中心缩放 → 改 StartZoomAtPoint + ZoomAtPoint 光标机制（每格偏移 50px）
+
+### 决策与原因
+- Qt6 下不用 WNT_Window（官方已知 bug：视图在 a.exec() 后消失），用 Aspect_NeutralWindow + SetNativeHandle(winId())
+- 3D 视图用定时器驱动重绘是 OcctQtViewer 标准做法；W5 再优化成事件驱动
+- 练习目标（practice/）用 if(EXISTS) 包裹，缺失不阻塞主工程
+
+### 待办 / 下一步
+- 提交后选方向：① 更多形状（圆柱/球/圆锥）② 参数面板改尺寸→3D 实时更新 ③ FeatureFactory（日志交接点）
+- 可选：WSL2 装 Ubuntu（Linux 双平台，第 5 周前做）
+
+### Git 状态
+```
+（本次提交：3D 视图 + BoxFeature 测试 + CMake 注册 + DLL 部署）
+f1a0ec7 chore: 环境重装后同步(换行符统一 CRLF); CMakeLists 练习目标加 if(EXISTS) 容错
+5db5941 Day2: BoxFeature 完成（第一个具体特征类），box_demo 验证通过；CMake 注册 BoxFeature.cpp
+```
+
+---
+
 ## 2026-08-27（教学会话：Day 2 进行中——Feature.h 完成）
 
 ### 已完成

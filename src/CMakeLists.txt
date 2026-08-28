@@ -1,7 +1,13 @@
 # ForgeCAD 核心库
+# AUTOMOC：自动调用 Qt 的 moc 编译器处理带 Q_OBJECT 的类
+# （Viewport3D 用了 Q_OBJECT 信号槽宏，不开这个会链接报错 metaObject 未解析）
+set(CMAKE_AUTOMOC ON)
+
 add_library(forgecore
     core/Version.cpp
+    domain/BoxFeature.cpp
     geometry/ShapeFactory.cpp
+    ui/Viewport3D.cpp
 )
 
 # 包含 src 根，便于 #include<core/...>
@@ -10,6 +16,7 @@ target_include_directories(forgecore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # 链接共享依赖
 target_link_libraries(forgecore PUBLIC
     Qt6::Core
+    Qt6::Widgets
     ${OCCT_LIBRARIES}
     spdlog::spdlog
 )
