@@ -60,16 +60,26 @@ if(FORGECAD_BUILD_TESTS)
 endif()
 
 # ---- 练习代码目标（practice/ 目录，不进 Git）----
-add_executable(memory_lesson practice/day1/memory_lesson.cpp)
+# 注意：practice/ 在 .gitignore 里，换机器/重新 clone 后可能不存在。
+# 用 if(EXISTS ...) 包裹，练习文件缺失时跳过，避免阻塞主工程构建。
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/practice/day1/memory_lesson.cpp")
+    add_executable(memory_lesson practice/day1/memory_lesson.cpp)
+endif()
 
-add_executable(polymorphism practice/day1/polymorphism.cpp)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/practice/day1/polymorphism.cpp")
+    add_executable(polymorphism practice/day1/polymorphism.cpp)
+endif()
 
-add_executable(parameter_demo practice/day1/parameter_demo.cpp)
-target_include_directories(parameter_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/practice/day1/parameter_demo.cpp")
+    add_executable(parameter_demo practice/day1/parameter_demo.cpp)
+    target_include_directories(parameter_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+endif()
 
 # 注意：.h 只声明，.cpp 才实现——实现文件必须写进 add_executable，否则 LNK2019
-add_executable(box_demo
-    practice/day1/box_demo.cpp
-    src/domain/BoxFeature.cpp
-)
-target_include_directories(box_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/practice/day1/box_demo.cpp")
+    add_executable(box_demo
+        practice/day1/box_demo.cpp
+        src/domain/BoxFeature.cpp
+    )
+    target_include_directories(box_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+endif()
