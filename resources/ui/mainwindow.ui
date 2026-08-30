@@ -14,14 +14,26 @@
    <string>MainWindow</string>
   </property>
   <widget class="QWidget" name="centralwidget">
-   <layout class="QHBoxLayout" name="mainLayout">
-    <item>
-     <widget class="QTreeView" name="modelTree"/>
-    </item>
-    <item>
-     <widget class="QWidget" name="viewportContainer" native="true"/>
-    </item>
-   </layout>
+   <widget class="QWidget" name="viewportContainer" native="true">
+    <property name="geometry">
+     <rect>
+      <x>409</x>
+      <y>159</y>
+      <width>311</width>
+      <height>241</height>
+     </rect>
+    </property>
+   </widget>
+   <widget class="QTreeView" name="modelTree">
+    <property name="geometry">
+     <rect>
+      <x>40</x>
+      <y>170</y>
+      <width>256</width>
+      <height>192</height>
+     </rect>
+    </property>
+   </widget>
   </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">
