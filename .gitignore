@@ -1,4 +1,4 @@
-﻿# 构建产物
+# 构建产物
 /build/
 build/
 *.user
@@ -13,6 +13,13 @@ CMakeFiles/
 # CLion 配置
 .idea/
 cmake-build-*/
+
+# Qt Creator 配置
+.qtcreator/
+CMakeUserPresets.json
+
+# Qt Designer 自动保存
+*.autosave
 
 # 临时
 *.log
