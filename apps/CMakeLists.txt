@@ -1,4 +1,4 @@
-﻿# ForgeCAD 桌面应用
+# ForgeCAD 桌面应用
 # AUTOMOC：自动处理 Q_OBJECT（信号槽宏）
 # AUTOUIC：自动把 .ui 文件（Qt Designer 拖出来的界面）转成 C++ 类
 set(CMAKE_AUTOMOC ON)
@@ -6,8 +6,8 @@ set(CMAKE_AUTOUIC ON)
 
 add_executable(forgecad WIN32
     forgecad/main.cpp
-    ../resources/ui/mainwindow.cpp
-    ../resources/ui/mainwindow.ui
+    ../src/ui/mainwindow.cpp
+    ../src/ui/mainwindow.ui
 )
 target_link_libraries(forgecad PRIVATE
     forgecore
@@ -15,10 +15,10 @@ target_link_libraries(forgecad PRIVATE
 )
 
 set_target_properties(forgecad PROPERTIES
-    AUTOUIC_SEARCH_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/../resources/ui
+    AUTOUIC_SEARCH_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui
 )
 target_include_directories(forgecad PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../resources/ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui
 )
 
 if(WIN32)

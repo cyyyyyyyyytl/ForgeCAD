@@ -1,54 +1,39 @@
 // ============================================================
-// ForgeCAD 主程序
+// ForgeCAD 主程序(装配层)
 // ------------------------------------------------------------
-// 结构（可视化 UI 版）：
-//   MainWindow（从 mainwindow.ui 加载的可视化主窗口）
-//     ├─ modelTree          左边：模型树（QTreeView）
-//     ├─ viewportContainer  右边：3D 视图容器
-//     │    └─ Viewport3D    我们自己写的 3D 视图控件（塞进容器里）
-//     │         └─ OCCT 渲染的 Box 模型
-//     └─ statusbar          底部状态栏
+// main.cpp 是"总装车间"：只负责把零件拼起来。
+//   ① 创建 Qt 应用
+//   ② 创建主窗口 MainWindow(内部已装好 3D 视图)
+//   ③ 造一个 Box，通过接口显示
+// 注意：这里不再 findChild —— 3D 视图由 MainWindow 内部创建，
+//       外部只通过 showBox() 接口操作(封装)。
 // ============================================================
 #include <QApplication>     // Qt 应用外壳
-#include <QVBoxLayout>      // 垂直布局（装 Viewport3D 用）
-#include <QTimer>           // 延迟执行（等窗口显示后再放形状，防黑屏）
+#include <QTimer>           // 延迟执行(等窗口显示后再放形状，防黑屏)
 #include <QStatusBar>       // 状态栏
 
 #include <spdlog/spdlog.h>  // 日志
 
 #include "core/Version.h"          // 版本号
 #include "geometry/ShapeFactory.h" // 建 Box 的工厂
-#include "ui/Viewport3D.h"         // 3D 视图控件（自己写的）
-#include "mainwindow.h"            // 主窗口类（mainwindow.ui 可视化界面）
+#include "mainwindow.h"            // 主窗口(内部有 3D 视图)
 
 int main(int argc, char* argv[]) {
-    QApplication app(argc, argv);   // 启动 Qt 应用
+    QApplication app(argc, argv);   // 启动 Qt 应用(必须有, 第一个)
 
-    // ---- 主窗口（从 .ui 加载的可视化界面）----
+    // ---- 创建主窗口(内部自动创建 3D 视图)----
     MainWindow win;
     win.setWindowTitle(QString("ForgeCAD v%1")
         .arg(QString::fromStdString(forge::core::Version::string())));
-
-    // ---- 把 Viewport3D 塞进 .ui 里的 viewportContainer ----
-    // findChild 按名字找容器（不需要改 MainWindow 类），塞入 3D 视图。
-    auto* container = win.findChild<QWidget*>("viewportContainer");
-    forge::ui::Viewport3D* viewport = nullptr;
-    if (container) {
-        auto* vlayout = new QVBoxLayout(container);
-        vlayout->setContentsMargins(0, 0, 0, 0);   // 不留边距
-        viewport = new forge::ui::Viewport3D(container);
-        vlayout->addWidget(viewport);              // 3D 视图占满整个容器
-    } else {
-        spdlog::error("main: viewportContainer not found in mainwindow.ui");
-    }
-
     win.show();
 
-    // ---- 建一个 Box 并显示到 3D 视图 ----
-    QTimer::singleShot(0, [&win, viewport]() {
+    // ---- 等窗口显示后, 造盒子并通过接口显示 ----
+    // QTimer::singleShot(0, ...): 延迟到事件循环开始后执行
+    //   (窗口显示后原生句柄才就绪, 否则 3D 视图黑屏)
+    QTimer::singleShot(0, [&win]() {
         auto box = forge::geometry::ShapeFactory::makeBox(100, 50, 30);
-        if (!box.IsNull() && viewport) {
-            viewport->showShape(box);
+        if (!box.IsNull()) {
+            win.showBox(box);        // 通过接口显示(封装, 不碰内部)
             win.statusBar()->showMessage("OCCT Box 已显示 ✔ 拖拽旋转 / 滚轮缩放");
             spdlog::info("ForgeCAD: Box displayed in 3D viewport");
         } else {
@@ -57,5 +42,5 @@ int main(int argc, char* argv[]) {
         }
     });
 
-    return app.exec();      // 进入事件循环
+    return app.exec();      // 进入事件循环(程序在这里跑起来)
 }
