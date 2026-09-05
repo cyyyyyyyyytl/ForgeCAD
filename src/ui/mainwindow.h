@@ -1,25 +1,27 @@
 // ============================================================
-// MainWindow：主窗口类
+// MainWindow：主窗口类（升级版：服务"任意特征"）
 // ------------------------------------------------------------
 // 职责：
-//   ① 加载可视化界面(mainwindow.ui：左侧模型树 + 右侧3D容器)
-//   ② 内部创建 Viewport3D 并放进 viewportContainer(正规写法,用 ui->)
-//   ③ 对外只暴露"能干什么"的接口(showBox),不暴露内部控件
-// 设计：封装——外部(main.cpp)通过接口操作,不翻内部控件
+//   ① 加载 .ui（菜单"新建" + 左侧属性舞台 + 右侧 3D 舞台）
+//   ② 持有"当前特征"（unique_ptr<Feature>，多态：Box/Cylinder...）
+//   ③ 菜单新建 → 弹对话框填参数 → FeatureFactory 造特征 → 接管当前模型
+//   ④ 属性面板动态化：按当前特征的 parameters() 现生成输入框
+// 设计思想：.ui 只摆"空舞台"，参数界面由代码按模型动态填充——
+//   以后加新特征类型，UI 代码零改动（数据驱动界面）。
 // ============================================================
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <TopoDS_Shape.hxx>      // OCCT 形状类型(showBox 的参数)
-#include <memory>        // std::unique_ptr：BoxFeature 成员用智能指针持有
+#include <memory>          // std::unique_ptr（持有当前模型）
+
 namespace Ui {
 class MainWindow;
 }
 
-// 前向声明：3D 视图控件(避免头文件互相 include)
+// 前向声明（避免头文件互相 include）：指针只需要知道"有这么个类"
 namespace forge::ui { class Viewport3D; }
-namespace forge::domain { class BoxFeature; }   // 先只声明存在，完整定义在 .cpp 里才需要
+namespace forge::domain { class Feature; }   // 基类——任意特征（Box/Cylinder...）
 
 class MainWindow : public QMainWindow
 {
@@ -29,22 +31,21 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
-    // 对外接口：显示一个 OCCT 形状到 3D 视图
-    // 外部(main.cpp)只管"给一个形状",不管内部怎么显示
-    void showBox(const TopoDS_Shape& shape);
-
 private slots:
-    // Qt Creator "转到槽" 生成的槽：控件值一变 → Qt 按名字约定自动调用
-    // （on_<控件名>_<信号名>；必须声明在 slots 区，moc 才认识它们）
-    void on_spinLength_valueChanged(double arg1);
-    void on_spinWidth_valueChanged(double arg1);
-    void on_spinHeight_valueChanged(double arg1);
+    // 菜单动作 → Qt 按名字约定自动连接（on_<动作名>_triggered）
+    void on_actionNewBox_triggered();       // 菜单"新建→长方体"被点击
+    void on_actionNewCylinder_triggered();  // 菜单"新建→圆柱体"被点击
 
 private:
     Ui::MainWindow *ui;
-    forge::ui::Viewport3D* viewport_ = nullptr;   // 3D 视图控件(类内部持有)
-    std::unique_ptr<forge::domain::BoxFeature> box_;   // 程序当前这个"参数化盒子"，面板改的就是它
-    void refreshModel();   // 公共动作：把面板值写进模型 → 重建 → 换图（三个槽都调它，避免重复代码）
+    forge::ui::Viewport3D* viewport_ = nullptr;      // 3D 视图控件
+    std::unique_ptr<forge::domain::Feature> current_; // 当前模型（可以是任意特征类型）
+
+    // ---- 私有工具（入口与动作分离：槽只负责转发，逻辑集中在这里）----
+    void createFeatureFromDialog(const QString& type); // 弹对话框 → 造特征 → 接管当前模型
+    QString nextFeatureId(const QString& type);        // 生成唯一身份证（Box001、Cylinder002…）
+    void rebuildParamPanel();                          // 按当前特征动态重建属性面板
+    void refreshViewport();                            // 当前特征 → 重建形状 → 显示 → 状态栏
 };
 
 #endif // MAINWINDOW_H

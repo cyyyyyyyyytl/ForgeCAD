@@ -9,6 +9,28 @@
 
 ---
 
+## 2026-09-05（续）UI 集成完成：菜单新建 + 动态属性面板（测试仍 28/28）
+
+### 已完成
+- **MainWindow 升级为"服务任意 Feature"**：`box_`（固定 BoxFeature）→ `unique_ptr<Feature> current_`（多态持有，Box/Cylinder 通用）
+- **属性面板动态化**：.ui 删掉写死的 3 个 spinbox → 留空容器 `paramPanelContainer`；代码按 `current_->parameters()`（规矩①）运行时生成输入框；动态控件无 `on_` 固定名 → 改**手动 connect + lambda 初始化捕获**（`[this, paramName = p.name()]`）；面板边距/行距整理（解决"贴顶"）
+- **菜单"新建 → 长方体/圆柱体"**（Designer action 自动连接）→ `createFeatureFromDialog()` 代码现造 `QDialog`+`QFormLayout`（参数行数随类型变）→ `FeatureFactory::create` → 接管当前模型 → 面板重建+出图
+- 参数默认值仍由 UI 侧 `defsForType` 提供（domain 与 UI 各一份——已知重复，待后续收拢）
+- mainwindow.h/.cpp 全量重写；main.cpp 早已瘦身
+
+### 决策与讨论（重要）
+- 用户提出"加新模块要维护很多"→ 讨论真实 CAD 架构：几何内核(OCCT)/应用框架(命令+树+泛型属性面板)/插件自注册；FreeCAD 泛型属性编辑器为参照
+- **决定：暂不做注册表/动态菜单收拢**，继续开发功能；等加第 3~4 种形状真正感到重复时再回头做"类型登记区"（届时体验对比更明显）
+- 整体 CAD 布局（左列 模型树+属性 / 右 3D）已设计成目标图，Designer 布局教学进行到一半，未完成（用户先继续功能）
+
+### 待办 / 下一步
+- 提交后选新功能方向：多特征+模型树 / Undo-Redo / 第三种形状 / 布局收尾
+
+### Git 状态
+- 本条目内容未提交：`src/ui/mainwindow.h/.cpp`、`src/ui/mainwindow.ui`（动态面板+菜单）
+
+---
+
 ## 2026-09-05（教学 + 开发：全链路精读 → rebuild 真形状 → 属性面板 → FeatureFactory/Cylinder）
 
 ### 目标
