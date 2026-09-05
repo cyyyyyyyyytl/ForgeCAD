@@ -132,9 +132,12 @@ void Viewport3D::showShape(const TopoDS_Shape& shape) {
     if (!context_) { diagLog("showShape: context_ is NULL!"); return; }
     if (!view_)    { diagLog("showShape: view_ is NULL!"); return; }
 
-    auto aisShape = new AIS_Shape(shape);
+    if (!displayed_.IsNull()) {                    // 旧物体还在 → 撤掉它
+        context_->Remove(displayed_, false);       // false = 先别刷新，下面统一刷
+    }
+    displayed_  = new AIS_Shape(shape);
     // OCCT 8.0: Display(对象, 显示模式, 选择模式, 是否刷新视图)
-    context_->Display(aisShape, AIS_Shaded, 0, false);
+    context_->Display(displayed_ , AIS_Shaded, 0, false);
     diagLog("Display called");
     view_->FitAll();
     view_->Redraw();

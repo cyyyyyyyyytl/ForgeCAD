@@ -9,6 +9,38 @@
 
 ---
 
+## 2026-09-05（教学 + 开发：全链路精读 → rebuild 真形状 → 属性面板 → FeatureFactory/Cylinder）
+
+### 目标
+先让用户彻底看懂整个 ForgeCAD 架构，再亲手打通"参数化闭环"，随后把 domain 扩到多形状。
+
+### 已完成（三个里程碑，测试 28/28 全绿）
+1. **架构逐行精读（对话内教学）**：main.cpp → ShapeFactory → Viewport3D → MainWindow → domain 全链讲透。用户掌握：分层依赖只许向下、TopoDS_Shape 是层间接缝、rebuild 是 domain 的唯一出口、"domain 目前只被测试用"是骨架期策略、.ui→uic→ui_mainwindow.h 流水线、Qt 自动连接约定。
+2. **里程碑 1 — rebuild() 升级为真形状**：`Feature::rebuild()` 签名 `std::string → TopoDS_Shape`；BoxFeature 的 rebuild 调 `ShapeFactory::makeBox`（domain→geometry 首次握手）；测试合同从"文本"换成"真形状"（12/12）。
+3. **里程碑 2 — 参数化属性面板（GUI 实时联动）**：.ui 加"属性"group（3×QDoubleSpinBox）；Qt Creator"转到槽"生成 `on_spin*_valueChanged`（自动连接 = on_<控件>_<信号> + setupUi 里的 connectSlotsByName）；MainWindow 持有 `unique_ptr<BoxFeature> box_` + `refreshModel()`；Viewport3D::showShape 改为"先 Remove 旧 AIS 再 Display 新"（成员 `displayed_`）；main.cpp 瘦身（模型归 MainWindow 管，不再直接调 ShapeFactory）。
+4. **里程碑 3 — CylinderFeature + FeatureFactory**：`ShapeFactory::makeCylinder`；`CylinderFeature`（radius/height）；`FeatureFactory::create` 按类型分发，参数个数不符/未知类型抛异常（防 vector 越界）；新增 2 个测试文件 + 2 个 shape 测试；多态统一操作测试实证"加新特征系统零改动"。
+
+### 踩坑与教学点（面试金矿）
+- **编辑器爆红三类原因**：① .h 用到类型却没 include（头文件要自给自足）；② 成员函数没在类里声明（槽还必须放 `slots:` 区，否则 moc 不认 → 编译过但静默失效）；③ `ui->xxx` 来自构建时 uic 生成，先构建再说。
+- **Viewport3D 换图两 bug**：Remove 条件写反（永远不删旧）；`auto displayed_ = new AIS_Shape(...)` 遮蔽成员（成员永远空，每次真"新建"）。结论：**模型层重算不删对象；显示层换图必须撤旧**。
+- **OCCT 8 IsDone() 偶发 false**：不能信标志，以 `Shape()` 实际产出为准（测试多次触发 warning 实证）。
+- **注释纪律**：改签名必须同步改注释（本次修掉 3 处 Box 复制残留 + 2 处 catch 日志抄错名）。
+- FeatureFactory.h 缺 `#pragma once`；`std::vector::operator[]` 不查边界——取下标前先查 `size()`。
+
+### 决策与原因
+- rebuild 直接调 geometry 采用路线图原案（最快出 demo）；domain 分层纯度留作日后 refactor。
+- 属性面板先用 Designer 自动槽（顺 Qt Creator 习惯）；将来泛化时再改代码手动 connect。
+- UI 用 spinbox `minimum=1` 做"前置校验"，让用户输不出非法值；domain `validate()` 仍留作兜底。
+
+### 待办 / 下一步
+- **UI 集成**：菜单"新建"选 长方体/圆柱体 → 对话框填参数 → 建立并显示。属性面板是否泛化为"跟随当前特征动态变化"待选方案（见会话）。
+
+### Git 状态
+- 本次会话累计改动未提交：rebuild 升级、属性面板、Viewport3D 换图、main 瘦身、Cylinder/Factory、28 测试、本日志。
+- 备注：`ForgeCAD_Cpp_秋招技术栈与项目规划.txt`（GBK 编码）仍 untracked，未纳入提交。
+
+---
+
 ## 2026-08-28（环境重装 + Day2 强化 + 3D 视图上线）
 
 ### 环境重装（本机全新配置，全部完成）

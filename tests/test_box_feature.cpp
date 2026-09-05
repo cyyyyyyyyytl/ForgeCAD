@@ -4,7 +4,7 @@
 // 测什么：BoxFeature 的 5 个核心行为（日志挑战③的规格）
 //   ① 构造（id / name 对不对）   ② 参数列表
 //   ③ 改参数（成功 + 失败抛异常）  ④ 校验（合法 / 非法）
-//   ⑤ 重建（返回描述文本）
+//   ⑤ 重建（返回真实 3D 形状，不再是文本）
 // 测试即"规格书"：这些断言就是 BoxFeature 的合同，
 //   以后改代码把测试跑红 = 破坏了合同。
 // ============================================================
@@ -95,14 +95,19 @@ TEST(BoxFeatureTest, ValidateRejectsZeroDimension) {
 }
 
 // ------------------------------------------------------------
-// ⑤ 重建测试
+// ⑤ 重建测试（升级版：rebuild() 现在返回真形状）
 // ------------------------------------------------------------
-// 目标：rebuild() 返回一段描述文本，必须包含 "Box" 和三个尺寸
-TEST(BoxFeatureTest, RebuildReturnsDescriptiveText) {
-    BoxFeature box("Box008", 100, 50, 30);
-    const std::string text = box.rebuild();   // 例如 "Box[id=Box008, length=100.0, ...]"
-    EXPECT_NE(text.find("Box"), std::string::npos);     // 包含 "Box"
-    EXPECT_NE(text.find("100"), std::string::npos);     // 包含 100
-    EXPECT_NE(text.find("50"), std::string::npos);      // 包含 50
-    EXPECT_NE(text.find("30"), std::string::npos);      // 包含 30
+// 目标：正数尺寸 → rebuild() 必须返回"非空"的合法形状
+//  （IsNull() 是 OCCT 判断形状是否为空的函数；空 = 造失败）
+TEST(BoxFeatureTest, RebuildReturnsValidShape) {
+    BoxFeature box("Box009", 100, 50, 30);
+    EXPECT_FALSE(box.rebuild().IsNull());   // 非空 = 造出来了
+}
+
+// 目标：参数被改成负数后 → rebuild() 必须返回空形状
+//  （ShapeFactory 会拒绝非法尺寸：记日志 + 返回空，这是它的失败约定）
+TEST(BoxFeatureTest, RebuildInvalidDimsReturnsNullShape) {
+    BoxFeature box("Box010", 100, 50, 30);
+    box.setParameter("length", -5.0);       // 把长度改成非法值
+    EXPECT_TRUE(box.rebuild().IsNull());    // 空 = 造失败
 }

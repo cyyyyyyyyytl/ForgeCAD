@@ -1,0 +1,803 @@
+C++ 秋招一个月：高强度技术栈 + 完整项目规划
+================================================
+
+目标
+----
+目标不是做一个“能跑的 Demo”，而是用一个月做出一个具备真实工程复杂度、可以写进 C++/工业软件/3D/CAD/客户端岗位简历，并且能够支撑面试深挖的完整项目。
+
+项目定位
+--------
+项目名称：ForgeCAD —— C++ 参数化三维建模与几何分析平台
+
+定位：
+- 面向 C++ 工业软件 / CAD / 3D / 几何算法岗位
+- 自研应用层架构 + OpenCASCADE 几何内核
+- Qt 桌面 GUI
+- CMake 工程化
+- Linux/Windows 双平台构建能力
+- 多线程、任务系统、日志、异常、单元测试、性能测试
+- 参数化建模 + 特征树 + Undo/Redo + STEP 数据交换
+- 不追求“功能很多”，而追求架构、抽象、算法、工程质量和可扩展性
+- 最终效果应该像一个“小型专业 CAD 内核应用”，而不是学生作业
+
+核心技术栈
+----------
+一、现代 C++
+- C++17/20
+- RAII
+- Rule of 0/3/5
+- 智能指针：unique_ptr/shared_ptr/weak_ptr
+- move semantics / rvalue reference / perfect forwarding
+- lambda / constexpr / structured binding
+- templates / type traits / concepts（按时间选择）
+- STL
+- iterator / algorithm
+- string / vector / map / unordered_map / set
+- optional / variant / any
+- filesystem
+- error handling
+- 自定义异常与错误码
+- OOP：封装、继承、多态、抽象接口
+- SOLID
+- 常见设计模式：Factory、Strategy、Command、Observer、Visitor、Composite
+
+二、C++ 工程能力
+- CMake
+- Git
+- GDB
+- 编译/链接原理
+- 静态库/动态库
+- Debug/Release
+- 编译选项
+- ABI 基础
+- 单元测试：GoogleTest
+- 日志：spdlog
+- 格式化：fmt
+- Sanitizer：ASan/UBSan
+- 性能分析：chrono + profiler
+- clang-format
+- clang-tidy
+
+三、操作系统 / Linux
+- Linux 常用命令
+- 进程/线程
+- 虚拟内存
+- 用户态/内核态
+- 文件描述符
+- IPC 基础
+- mutex / semaphore / condition_variable / atomic
+- 死锁、竞态条件、线程安全
+- thread pool
+- Linux 下编译、调试、部署
+- Windows 与 Linux 工程差异
+
+四、计算机网络
+- TCP/IP
+- Socket
+- TCP/UDP
+- 三次握手/四次挥手
+- 粘包/拆包
+- IO 多路复用基础
+- HTTP/HTTPS 基础
+- JSON
+- 项目中可选：本地 TCP 控制接口 / 远程任务接口
+
+五、GUI
+- Qt 6
+- QObject
+- signal/slot
+- QWidget
+- QMainWindow
+- Model/View
+- QTreeView / QTableView
+- DockWidget
+- Property Editor
+- Qt Designer
+- OpenGL/Qt 3D View 集成
+- GUI 与业务逻辑解耦
+- MVC/MVVM 思想
+
+六、3D / 数学
+- 三维向量
+- 点积/叉积
+- 法向量
+- 坐标系
+- 欧拉角
+- 四元数基础
+- 4x4 变换矩阵
+- 平移/旋转/缩放
+- 世界坐标/局部坐标
+- 包围盒 AABB
+- 射线与实体拾取基础
+- 数值误差与容差
+- 几何计算中的浮点问题
+
+七、CAD / 几何建模
+- B-Rep
+- Geometry vs Topology
+- Vertex / Edge / Wire / Face / Shell / Solid
+- NURBS 基础
+- 曲线/曲面
+- Boolean Fuse/Cut/Common
+- Fillet
+- Chamfer
+- Extrude
+- Revolve
+- Transform
+- Shape healing 基础
+- 几何有效性检查
+- Shape analysis
+- Volume / Area / Center of Mass
+- Bounding Box
+- STEP/IGES 数据交换
+- OpenCASCADE Technology（OCCT）
+
+八、软件架构
+- Layered Architecture
+- Domain Model
+- Application Service
+- Command System
+- Repository 思想
+- Event/Observer
+- Plugin/Extension 思想
+- Undo/Redo
+- 可扩展 Feature 系统
+- UI / Application / Domain / Infrastructure 解耦
+
+九、数据库/持久化（项目中适量使用）
+- SQLite
+- 项目参数/最近文件/用户配置
+- 数据序列化
+- JSON
+- 不把数据库做成 CRUD 项目重点
+
+十、AI（作为项目增强方向，不作为核心依赖）
+- LLM API
+- Function Calling / Tool Calling
+- Structured Output
+- AI -> 参数化建模指令
+- 自然语言生成建模参数
+- AI 解释模型分析结果
+- AI 辅助生成建模操作序列
+- AI 模块与核心几何引擎解耦
+- 不允许 AI 直接替代核心 C++ 几何逻辑
+
+
+项目核心功能
+============
+
+1. 参数化建模系统
+----------------
+支持：
+- Box
+- Cylinder
+- Sphere
+- Cone
+- Torus
+- Extrude
+- Revolve
+
+每个模型具有参数对象，例如：
+Box:
+  length
+  width
+  height
+
+Cylinder:
+  radius
+  height
+
+要求：
+- 修改参数后重新生成 Shape
+- Feature 有唯一 ID
+- Feature 有名称
+- Feature 有参数
+- Feature 有输入依赖
+- Feature 有输出 Shape
+
+重点学习：
+- OOP
+- polymorphism
+- Factory
+- Domain Model
+- 参数化建模思想
+
+
+2. Feature Tree / 参数历史树
+----------------------------
+类似 CAD 软件：
+Body
+  ├── Sketch
+  ├── Extrude
+  ├── Fillet
+  ├── Cut
+  └── Chamfer
+
+要求：
+- Feature 树
+- 父子依赖
+- 参数修改后增量重建
+- 重建失败状态
+- Feature suppress / unsuppress
+- Feature reorder 基础
+
+重点：
+- DAG
+- Dependency Graph
+- Topological Sort
+- Command
+- 状态管理
+- CAD 参数化思想
+
+
+3. Boolean Kernel
+-----------------
+实现：
+- Fuse
+- Cut
+- Common
+
+要求：
+- 两个或多个 Shape
+- 错误检测
+- 运算耗时统计
+- 无效 Shape 检查
+- 失败后返回可解释错误
+
+重点：
+- OCCT
+- B-Rep
+- 几何有效性
+- 异常处理
+- 性能
+
+
+4. 几何分析模块
+----------------
+支持：
+- Volume
+- Surface Area
+- Center of Mass
+- Bounding Box
+- Vertex count
+- Edge count
+- Face count
+- Solid count
+
+进一步：
+- 两个实体距离
+- 点到面距离
+- 面积排序
+- 最大/最小尺寸
+- 模型尺寸统计
+
+要求统一接口：
+IShapeAnalyzer
+
+重点：
+- Interface
+- Strategy
+- Visitor
+- 几何遍历
+
+
+5. 交互式 3D View
+-----------------
+实现：
+- 旋转
+- 平移
+- 缩放
+- Fit All
+- 正交/透视切换
+- 选择实体
+- Face/Edge/Vertex 高亮
+- 模型树与 3D 视图联动
+- 基本坐标轴/Gizmo
+
+重点：
+- Qt
+- OpenGL/3D rendering
+- Camera
+- Coordinate Transform
+- Picking
+
+
+6. Sketch / 草图模块（简化但要有水平）
+--------------------------------------
+不要做完整商业 CAD Sketcher，而是实现一个可扩展的二维草图系统。
+
+支持：
+- Point
+- Line
+- Circle
+- Arc
+- Rectangle
+
+约束：
+- Horizontal
+- Vertical
+- Coincident
+- Parallel
+- Perpendicular
+- Distance
+- Radius
+
+目标：
+- 草图几何对象 + 约束对象分离
+- 参数化约束
+- 基础约束求解
+- 草图可用于 Extrude
+
+如果一个月时间不足：
+优先实现几何对象 + 少量约束 + 参数驱动，不要追求完整求解器。
+
+
+7. Undo / Redo
+--------------
+所有重要操作走 Command：
+
+CreateFeatureCommand
+DeleteFeatureCommand
+ModifyParameterCommand
+BooleanCommand
+TransformCommand
+
+要求：
+- Ctrl+Z
+- Ctrl+Y
+- Command Stack
+- 支持连续操作
+- 参数修改可撤销
+
+重点：
+- Command Pattern
+- 状态管理
+- 对象生命周期
+
+
+8. STEP 文件系统
+----------------
+实现：
+- STEP Import
+- STEP Export
+- 文件错误处理
+- 最近打开文件
+- 模型元数据
+
+进一步：
+- 大模型加载异步化
+- 加载进度
+- 加载耗时统计
+
+重点：
+- IO
+- OCCT Data Exchange
+- Threading
+- Error Handling
+
+
+9. 异步任务系统
+----------------
+自己实现轻量 Task System：
+
+Task
+TaskQueue
+ThreadPool
+Future/Promise
+
+应用：
+- STEP 加载
+- Boolean
+- Shape Analysis
+- 大模型计算
+
+要求：
+- GUI 不阻塞
+- 任务取消基础能力
+- 任务状态
+- 进度回调
+- 错误回调
+
+重点：
+- std::thread
+- mutex
+- condition_variable
+- atomic
+- future
+- Producer/Consumer
+- Thread Pool
+
+
+10. 日志与错误系统
+------------------
+使用：
+- spdlog
+
+日志级别：
+TRACE
+DEBUG
+INFO
+WARN
+ERROR
+
+记录：
+- Feature 创建
+- Boolean
+- STEP IO
+- Task
+- 异常
+- 性能
+
+错误模型：
+- expected 风格返回值或统一 Result
+- Exception 用于真正异常情况
+- GUI 层显示用户可理解错误
+
+
+11. 性能分析
+------------
+建立 Benchmark 模块。
+
+统计：
+- Shape 创建耗时
+- Boolean 耗时
+- STEP Import 耗时
+- STEP Export 耗时
+- Shape Analysis 耗时
+
+输出：
+- 单次耗时
+- 平均耗时
+- P95/P99（如果时间允许）
+
+进一步：
+- 不同模型数量
+- 不同模型复杂度
+- 多线程前后对比
+
+重点：
+- 性能意识
+- profiling
+- 时间复杂度
+- 内存管理
+
+
+12. 测试系统
+------------
+GoogleTest。
+
+至少测试：
+- 参数校验
+- Box 创建
+- Cylinder 创建
+- Boolean
+- Volume
+- Bounding Box
+- Transform
+- Feature dependency
+- Undo/Redo
+- STEP Import/Export
+
+增加：
+- Regression Test
+- 异常输入测试
+
+
+13. AI 建模助手（最后加入）
+--------------------------
+最终可以增加：
+
+用户输入：
+“创建一个长 100、宽 50、高 30 的盒子，然后在中心打一个直径 20 的通孔。”
+
+AI 不直接生成 C++ 代码。
+
+AI 输出结构化命令：
+{
+  "operations": [
+    {
+      "type": "create_box",
+      "length": 100,
+      "width": 50,
+      "height": 30
+    },
+    {
+      "type": "create_cylinder",
+      "radius": 10,
+      "height": 30
+    },
+    {
+      "type": "boolean_cut",
+      "target": "Box001",
+      "tool": "Cylinder001"
+    }
+  ]
+}
+
+C++ Application Layer 验证参数后执行。
+
+重点：
+- LLM API
+- Structured Output
+- Tool Calling
+- Schema Validation
+- AI 与核心业务解耦
+
+这会形成：
+自然语言 -> AI -> 建模指令 -> C++ -> OCCT -> 3D 模型
+
+
+推荐最终工程结构
+================
+
+ForgeCAD/
+├── CMakeLists.txt
+├── README.md
+├── LICENSE
+├── docs/
+│   ├── architecture.md
+│   ├── design.md
+│   └── benchmark.md
+│
+├── apps/
+│   └── forgecad/
+│       └── main.cpp
+│
+├── src/
+│   ├── core/
+│   │   ├── Application
+│   │   ├── Result
+│   │   ├── Error
+│   │   └── Logger
+│   │
+│   ├── domain/
+│   │   ├── Feature
+│   │   ├── Body
+│   │   ├── Parameter
+│   │   ├── Shape
+│   │   └── DependencyGraph
+│   │
+│   ├── geometry/
+│   │   ├── ShapeFactory
+│   │   ├── Boolean
+│   │   ├── Transform
+│   │   ├── Analyzer
+│   │   └── Sketch
+│   │
+│   ├── application/
+│   │   ├── Command
+│   │   ├── CommandManager
+│   │   ├── FeatureManager
+│   │   └── TaskManager
+│   │
+│   ├── infrastructure/
+│   │   ├── StepIO
+│   │   ├── Json
+│   │   ├── Config
+│   │   └── Persistence
+│   │
+│   ├── threading/
+│   │   ├── ThreadPool
+│   │   ├── Task
+│   │   └── TaskQueue
+│   │
+│   └── ui/
+│       ├── MainWindow
+│       ├── ModelTree
+│       ├── PropertyPanel
+│       ├── Viewport
+│       └── Dialogs
+│
+├── tests/
+├── benchmarks/
+├── resources/
+└── scripts/
+
+
+一个月学习重点
+==============
+
+第一优先级：
+- Modern C++
+- STL
+- RAII
+- 智能指针
+- 多态
+- 模板
+- CMake
+- Git
+- GDB
+- Linux
+- 多线程
+- 数据结构/算法
+- 操作系统
+- TCP/IP 基础
+
+第二优先级：
+- Qt 6
+- OpenCASCADE
+- 线性代数
+- 3D 坐标变换
+- B-Rep
+- CAD 几何拓扑
+- 设计模式
+- GoogleTest
+- spdlog
+
+第三优先级：
+- OpenGL 渲染细节
+- Sketch Constraint Solver
+- 网络服务
+- SQLite
+- AI Function Calling
+- 性能 profiling 深入
+
+不要为了技术栈而技术栈：
+- 不需要同时学 Java/Go
+- 不需要做 CRUD
+- 不需要做普通聊天室
+- 不需要做学生管理系统
+- 不需要把 OpenGL 学成图形学研究生水平
+- 不需要完整复刻 AutoCAD/SolidWorks
+- 不需要自己实现 CAD Kernel
+- OCCT 是底层几何内核，自己的价值放在应用层架构、参数化系统、任务系统、交互、工程化和算法上
+
+
+项目必须达到的“非 Demo”标准
+============================
+
+1. 有清晰架构
+2. 模块之间低耦合
+3. CMake 正确组织工程
+4. Git 有真实开发历史
+5. 有单元测试
+6. 有日志
+7. 有错误处理
+8. 有多线程任务系统
+9. 有 Undo/Redo
+10. 有参数化 Feature
+11. 有依赖图
+12. 有 STEP IO
+13. 有性能测试
+14. 有 README 和架构文档
+15. 能解释每个核心模块为什么这么设计
+16. 能在面试中现场修改/扩展功能
+17. 至少有一个完整的性能优化案例
+18. 至少有一个真实的并发问题/异常问题解决过程
+19. 至少有一个自己设计的数据结构
+20. 至少有一个自己设计的抽象接口
+
+
+秋招面试必须能讲的内容
+========================
+
+C++：
+- vector 扩容
+- map/unordered_map
+- shared_ptr 原理
+- weak_ptr
+- RAII
+- move semantics
+- virtual function
+- vtable
+- memory layout
+- template
+- exception safety
+- allocator 基础
+
+并发：
+- mutex
+- atomic
+- condition_variable
+- deadlock
+- thread pool
+- producer/consumer
+
+Linux：
+- process/thread
+- virtual memory
+- file descriptor
+- gdb
+- core dump
+- shared library
+
+网络：
+- TCP
+- UDP
+- socket
+- HTTP
+- IO multiplexing 基础
+
+工程：
+- CMake
+- Git
+- static/dynamic library
+- unit test
+- sanitizer
+
+3D/CAD：
+- vector/matrix
+- coordinate transform
+- B-Rep
+- topology
+- Boolean
+- tolerance
+- STEP
+- Shape validity
+
+架构：
+- Factory 为什么用
+- Command 为什么用
+- Observer 怎么解耦
+- Feature Tree 怎么实现
+- Undo/Redo 怎么实现
+- Task System 怎么避免 UI 阻塞
+- AI 为什么不能直接操作 Kernel
+
+
+一个月结束时的成果
+==================
+
+必须拥有：
+1. 可运行的 ForgeCAD
+2. GitHub/Gitee 仓库
+3. 完整 README
+4. 架构图
+5. 功能演示视频/GIF
+6. 单元测试报告
+7. Benchmark 数据
+8. 项目技术文档
+9. 一份针对 C++/工业软件岗位的简历项目描述
+10. 一套针对该项目的面试问答
+
+最终简历关键词
+==============
+
+C++
+Modern C++
+STL
+Qt 6
+OpenCASCADE
+B-Rep
+3D Geometry
+CAD
+CMake
+Git
+Linux
+Multithreading
+Thread Pool
+Design Patterns
+GoogleTest
+spdlog
+STEP
+Parametric Modeling
+Feature Tree
+Undo/Redo
+Performance Optimization
+AI Function Calling（如果完成）
+
+项目的核心目标
+==============
+
+不是“一个月做出一个 CAD”。
+
+而是通过 ForgeCAD 在一个真实问题上同时训练：
+
+C++语言能力
++ 软件工程能力
++ 算法能力
++ 多线程能力
++ Linux能力
++ GUI能力
++ 3D数学
++ CAD几何
++ 架构设计
++ 测试
++ 性能优化
++ AI工程
+
+最终让面试官看到的不是：
+“这个学生会几个 C++ API。”
+
+而是：
+“这个人已经开始具备独立设计和实现 C++ 工业软件模块的能力。”

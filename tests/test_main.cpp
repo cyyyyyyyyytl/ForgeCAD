@@ -22,6 +22,17 @@ TEST(ShapeFactoryTest, MakeBoxInvalidReturnsNull) {
     EXPECT_TRUE(box.IsNull());
 }
 
+// 验证 OCCT Cylinder 创建
+TEST(ShapeFactoryTest, MakeCylinderPositive) {
+    auto cyl = forge::geometry::ShapeFactory::makeCylinder(20.0, 60.0);
+    EXPECT_FALSE(cyl.IsNull());
+}
+
+TEST(ShapeFactoryTest, MakeCylinderInvalidReturnsNull) {
+    auto cyl = forge::geometry::ShapeFactory::makeCylinder(0, 60.0);
+    EXPECT_TRUE(cyl.IsNull());
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

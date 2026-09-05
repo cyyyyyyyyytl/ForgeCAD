@@ -1,6 +1,7 @@
 #include "domain/BoxFeature.h"            // 自己对应的头文件（.cpp 第一行永远是它）
 #include <stdexcept>                      // std::invalid_argument：参数不存在时抛的异常
 #include <utility>                        // std::move
+#include "geometry/ShapeFactory.h"            // 几何层工厂：真正会造盒子的地方，rebuild 请它干活
 
 namespace forge::domain {
 
@@ -51,13 +52,14 @@ std::string BoxFeature::validate() const {
 // ------------------------------------------------------------
 // 规矩④：重建
 // ------------------------------------------------------------
-// W3 之前：返回一段文本描述"我是什么"。W3 接 OCCT 后这里会生成真正的 3D 形状。
+// 重建 = 重算：拿 params_ 里现在的三个数，请几何层工厂造一个新形状返回。
+// 这里没有"删除"逻辑——旧形状由引用计数自动释放（OCCT handle 管理）。
 // params_[0]/[1]/[2] 就是 length/width/height（构造时按这个顺序装的）
-std::string BoxFeature::rebuild() const {
-    return "Box[id=" + id()
-         + ", length=" + std::to_string(params_[0].asDouble())
-         + ", width="  + std::to_string(params_[1].asDouble())
-         + ", height=" + std::to_string(params_[2].asDouble()) + "]";
+TopoDS_Shape BoxFeature::rebuild() const {
+    return forge::geometry::ShapeFactory::makeBox(
+        params_[0].asDouble(),   // length：第 0 个参数，取成 double
+        params_[1].asDouble(),   // width
+        params_[2].asDouble());  // height
 }
 
 } // namespace forge::domain

@@ -21,6 +21,8 @@
 #include <V3d_View.hxx>               // 3D 视图：相机视角 + 画布
 #include <V3d_Viewer.hxx>             // 3D 场景：容纳多个 View
 #include <TopoDS_Shape.hxx>           // OCCT 形状类型（Box 等）
+#include <AIS_Shape.hxx>              // OCCT 显示对象（形状的包装）
+
 
 namespace forge::ui {
 
@@ -56,6 +58,7 @@ private:
     occ::handle<V3d_Viewer>             viewer_;    // 场景容器
     occ::handle<V3d_View>               view_;      // 视图（画布+相机）
     occ::handle<AIS_InteractiveContext> context_;   // 场景管理器（显示/隐藏物体）
+    occ::handle<AIS_Shape>              displayed_; // 显示的形状
 };
 
 } // namespace forge::ui

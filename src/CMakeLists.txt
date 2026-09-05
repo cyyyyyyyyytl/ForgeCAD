@@ -8,6 +8,8 @@ add_library(forgecore
     domain/BoxFeature.cpp
     geometry/ShapeFactory.cpp
     ui/Viewport3D.cpp
+    domain/CylinderFeature.cpp
+    domain/FeatureFactory.cpp
 )
 
 # 包含 src 根，便于 #include<core/...>

@@ -3,6 +3,7 @@
 #include <vector>                         // std::vector：动态数组（参数列表用）
 #include <utility>                        // std::move：移动语义（构造时把值"搬"进成员，不复制）
 #include "domain/Parameter.h"             // 我们刚写的 Parameter（参数）类——Feature 的成员就是它
+#include <TopoDS_Shape.hxx>               // OCCT 的形状类型：rebuild() 的返回值从文本升级成真形状，编译器必须认识它
 
 namespace forge::domain {                 // 门牌号：forge 项目 / domain 领域层（避免和别的模块撞名）
 
@@ -47,8 +48,8 @@ public:
     //   合法返回空串 ""，不合法返回原因（如 "length 必须大于 0"）
     virtual std::string validate() const = 0;
 
-    // 规矩④：重建自己（W3 之前返回文本描述；W3 接 OCCT 生成真正的 3D 形状）
-    virtual std::string rebuild() const = 0;
+    // 规矩④：重建自己——按当前参数重新算出自己的几何形状（重建 = 重算，不是"删了再建"）
+    virtual TopoDS_Shape rebuild() const = 0;
 
 private:
     std::string id_;      // 数据①：唯一身份证号，如 "Box001"（整个工程里不能重复）
