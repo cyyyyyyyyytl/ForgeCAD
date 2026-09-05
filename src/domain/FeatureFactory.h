@@ -19,7 +19,8 @@ namespace forge::domain {
 class FeatureFactory {
 public:
     // 按类型名造特征。
-    //   type  = "Box"(3 个数：长/宽/高) 或 "Cylinder"(2 个数：半径/高度)
+    //   type  = "Box"(3 个数：长/宽/高)、"Cylinder"(2 个数：半径/高度)
+    //           或 "Sphere"(1 个数：半径)
     //   id    = 特征的身份证号
     //   sizes = 尺寸参数（个数不对 → 抛 std::invalid_argument）
     //   未知 type → 抛 std::invalid_argument（调用方写错了，响亮地炸出来提醒）

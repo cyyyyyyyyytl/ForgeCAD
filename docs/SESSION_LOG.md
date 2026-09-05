@@ -9,6 +9,29 @@
 
 ---
 
+## 2026-09-05（续 2）第三种形状 Sphere 上线（测试 41/41）
+
+### 已完成
+- **ShapeFactory::makeSphere**（BRepPrimAPI_MakeSphere，半径单参数，同一套错误处理/IsDone 兼容）
+- **SphereFeature**（radius 单参数特征，name=="Sphere"）注册进 FeatureFactory + CMake
+- **UI 接入**：Designer 菜单加"球体"（actionNewSphere）+ 槽 + `defsForType` 加 `sphDefs` + 对话框标题改用 `kindLabel(type)`（删掉 Box/Cylinder 三元表达式）
+- 测试：`test_sphere_feature.cpp`（9 个）+ makeSphere 2 个 + 工厂球体 2 个；多态统一测试升级为三种形状同循环驱动
+
+### 教训（用户亲手体验"加形状的维护成本"）
+- 加第 3 种形状共碰约 10 处（几何/新类/工厂/CMake/菜单/槽×2/参数表/标题/3 个测试文件）
+- **用户漏了 2 处且无编译报错**：①`defsForType` 无 Sphere → 点菜单静默无反应 ②对话框标题仍写死 Box/Cylinder。已补
+- SphereFeature 注释第三次出现"复制 Box 残留"——复制粘贴后必须通读
+- 测试假设会过时：`UnknownTypeThrows` 原用 "Sphere" 当未知类型，球体上线即红，改用 "Torus"
+- 结论：用户此前"加模块维护多"的直觉被证实（第 3 种已漏 2 处）→ "类型登记区收拢"重构的论据已充分，待做
+
+### 决策 / 下一步
+- 用户确认体感后同意后续考虑收拢；下一部分待选：多特征+模型树 / Undo-Redo / 第 4 种形状 / 收拢登记区
+
+### Git 状态
+- 本条目内容未提交：Sphere 全链路（domain/geometry/ui/tests）
+
+---
+
 ## 2026-09-05（续）UI 集成完成：菜单新建 + 动态属性面板（测试仍 28/28）
 
 ### 已完成

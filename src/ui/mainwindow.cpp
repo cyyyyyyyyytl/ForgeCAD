@@ -44,9 +44,20 @@ QString paramLabel(const std::string& en) {
 }
 
 // ------------------------------------------------------------
+// 类型名(domain 契约) → 中文名
+// ------------------------------------------------------------
+// 菜单项文字、对话框标题共用这一处；加新类型 = 在这里加一行
+QString kindLabel(const QString& kind) {
+    if (kind == QStringLiteral("Box"))      return QStringLiteral("长方体");
+    if (kind == QStringLiteral("Cylinder")) return QStringLiteral("圆柱体");
+    if (kind == QStringLiteral("Sphere"))   return QStringLiteral("球体");
+    return kind;   // 还没加中文名的类型先用原名
+}
+
+// ------------------------------------------------------------
 // 每种类型在建"新建对话框"时要哪些参数、默认值是多少
 // ------------------------------------------------------------
-// 这份表必须和 FeatureFactory 的契约一致（Box=3个数，Cylinder=2个数）
+// 这份表必须和 FeatureFactory 的契约一致（Box=3 个数，Cylinder=2 个数，Sphere=1 个数）
 struct ParamDef {
     const char* name;      // 参数名（与 domain 一致）
     double defValue;       // 对话框初值
@@ -59,9 +70,13 @@ const std::vector<ParamDef>& defsForType(const QString& type) {
     static const std::vector<ParamDef> cylDefs = {
         {"radius", 20.0}, {"height", 60.0}
     };
+    static const std::vector<ParamDef> sphDefs = {
+        {"radius", 20.0}
+    };
     static const std::vector<ParamDef> emptyDefs;   // 未知类型：空清单
     if (type == QStringLiteral("Box"))      return boxDefs;
     if (type == QStringLiteral("Cylinder")) return cylDefs;
+    if (type == QStringLiteral("Sphere"))   return sphDefs;
     return emptyDefs;
 }
 
@@ -123,6 +138,11 @@ void MainWindow::on_actionNewCylinder_triggered()
     createFeatureFromDialog(QStringLiteral("Cylinder"));
 }
 
+void MainWindow::on_actionNewSphere_triggered()
+{
+    createFeatureFromDialog(QStringLiteral("Sphere"));
+}
+
 // ============================================================
 // createFeatureFromDialog：弹出"填参数"对话框 → 造特征 → 接管当前模型
 // ============================================================
@@ -134,8 +154,8 @@ void MainWindow::createFeatureFromDialog(const QString& type)
 
     // ② 用代码现造对话框：标题 + 每个参数一行（标签+数字框）
     QDialog dlg(this);
-    dlg.setWindowTitle(type == QStringLiteral("Box") ? QStringLiteral("新建长方体")
-                                                     : QStringLiteral("新建圆柱体"));
+    // 标题用"中文类型名"拼：加新类型只改 kindLabel 一处，不再写死三元表达式
+    dlg.setWindowTitle(QStringLiteral("新建") + kindLabel(type));
     auto* form = new QFormLayout(&dlg);       // 表单布局：一行 = 标签 + 输入框
     std::vector<QDoubleSpinBox*> spins;       // 记下所有输入框，确定后好取值
 

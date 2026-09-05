@@ -35,6 +35,7 @@ private slots:
     // 菜单动作 → Qt 按名字约定自动连接（on_<动作名>_triggered）
     void on_actionNewBox_triggered();       // 菜单"新建→长方体"被点击
     void on_actionNewCylinder_triggered();  // 菜单"新建→圆柱体"被点击
+    void on_actionNewSphere_triggered();  // 菜单"新建→球体"被点击
 
 private:
     Ui::MainWindow *ui;

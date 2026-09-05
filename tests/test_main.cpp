@@ -33,6 +33,17 @@ TEST(ShapeFactoryTest, MakeCylinderInvalidReturnsNull) {
     EXPECT_TRUE(cyl.IsNull());
 }
 
+// 验证 OCCT Sphere 创建
+TEST(ShapeFactoryTest, MakeSpherePositive) {
+    auto sph = forge::geometry::ShapeFactory::makeSphere(20.0);
+    EXPECT_FALSE(sph.IsNull());
+}
+
+TEST(ShapeFactoryTest, MakeSphereInvalidReturnsNull) {
+    auto sph = forge::geometry::ShapeFactory::makeSphere(0);
+    EXPECT_TRUE(sph.IsNull());
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

@@ -73,7 +73,7 @@
       <x>275</x>
       <y>106</y>
       <width>120</width>
-      <height>94</height>
+      <height>116</height>
      </rect>
     </property>
     <property name="title">
@@ -81,6 +81,7 @@
     </property>
     <addaction name="actionNewBox"/>
     <addaction name="actionNewCylinder"/>
+    <addaction name="actionNewSphere"/>
    </widget>
    <addaction name="menu"/>
   </widget>
@@ -96,6 +97,14 @@
   <action name="actionNewCylinder">
    <property name="text">
     <string>圆柱体</string>
+   </property>
+   <property name="menuRole">
+    <enum>QAction::MenuRole::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionNewSphere">
+   <property name="text">
+    <string>球体</string>
    </property>
    <property name="menuRole">
     <enum>QAction::MenuRole::NoRole</enum>
