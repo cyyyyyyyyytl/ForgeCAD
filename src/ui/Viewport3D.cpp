@@ -120,25 +120,46 @@ void Viewport3D::initViewer() {
 }
 
 // ============================================================
-// 显示一个形状
+// 同时显示多个形状，并高亮当前选中的一个
 // ============================================================
-void Viewport3D::showShape(const TopoDS_Shape& shape) {
-    if (shape.IsNull()) {
-        diagLog("showShape: shape is null!");
-        spdlog::error("Viewport3D::showShape: shape is null");
-        return;
-    }
-    diagLog("showShape: got valid shape");
-    if (!context_) { diagLog("showShape: context_ is NULL!"); return; }
-    if (!view_)    { diagLog("showShape: view_ is NULL!"); return; }
+void Viewport3D::showShapes(const std::vector<TopoDS_Shape>& shapes, int selectedIndex) {
+    if (!context_) { diagLog("showShapes: context_ is NULL!"); return; }
+    if (!view_)    { diagLog("showShapes: view_ is NULL!"); return; }
 
-    if (!displayed_.IsNull()) {                    // 旧物体还在 → 撤掉它
-        context_->Remove(displayed_, false);       // false = 先别刷新，下面统一刷
+    // ① 清掉上一轮的选中状态和显示对象。
+    // false 表示先不立即刷新；全部处理完成后只统一 Redraw 一次，避免闪烁。
+    context_->ClearSelected(false);
+    for (const auto& displayed : displayedShapes_) {
+        if (!displayed.IsNull()) {
+            context_->Remove(displayed, false);
+        }
     }
-    displayed_  = new AIS_Shape(shape);
-    // OCCT 8.0: Display(对象, 显示模式, 选择模式, 是否刷新视图)
-    context_->Display(displayed_ , AIS_Shaded, 0, false);
-    diagLog("Display called");
+    displayedShapes_.clear();
+    displayedShapes_.reserve(shapes.size());
+
+    // ② 每个 TopoDS_Shape 都包装成自己的 AIS_Shape，并放进 3D 场景。
+    // 空形状不显示；正常情况下 MainWindow 已经提前过滤掉空形状，
+    // 这里再检查一次，是显示层自己的最后一道防御。
+    for (const auto& shape : shapes) {
+        if (shape.IsNull()) {
+            spdlog::warn("Viewport3D::showShapes skipped a null shape");
+            continue;
+        }
+
+        occ::handle<AIS_Shape> displayed = new AIS_Shape(shape);
+        // OCCT 8.0: Display(对象, 显示模式, 选择模式, 是否刷新视图)
+        context_->Display(displayed, AIS_Shaded, 0, false);
+        displayedShapes_.push_back(displayed);
+    }
+
+    // ③ selectedIndex 是“有效形状列表”的下标。
+    // SetSelected 会使用 OCCT 内置的选中样式把当前对象高亮。
+    if (selectedIndex >= 0
+        && selectedIndex < static_cast<int>(displayedShapes_.size())) {
+        context_->SetSelected(displayedShapes_[selectedIndex], false);
+    }
+
+    diagLog("showShapes: displayed " + std::to_string(displayedShapes_.size()) + " shapes");
     view_->FitAll();
     view_->Redraw();
     diagLog("FitAll + Redraw done");

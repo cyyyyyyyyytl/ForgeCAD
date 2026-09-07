@@ -5,7 +5,7 @@
 //   · features_（集合）是唯一真相源；模型树只是它的展示
 //   · 新建特征 → 追加进集合 → 整树重建 → 自动选中新特征
 //   · 点树 → selectFeature() 换选中 → 属性面板和 3D 视图跟着切
-//   · 属性面板每行输入框变化 → setParameter → rebuild → showShape（实时联动）
+//   · 属性面板每行输入框变化 → setParameter → rebuild → showShapes（实时联动）
 // ============================================================
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
@@ -328,21 +328,40 @@ void MainWindow::rebuildParamPanel()
 }
 
 // ============================================================
-// refreshViewport：选中特征 → 重建形状 → 显示 → 状态栏汇报
+// refreshViewport：重建全部形状 → 同时显示 → 高亮选中项 → 状态栏汇报
 // ============================================================
 void MainWindow::refreshViewport()
 {
     if (!viewport_) return;                                      // 3D 视图还没就绪（启动早期）
     if (selectedIndex_ < 0 || selectedIndex_ >= static_cast<int>(features_.size())) return;
 
-    TopoDS_Shape shape = features_[selectedIndex_]->rebuild();   // 多态规矩④：不管哪种类型同样调用
+    // ① 依次重建仓库里的所有 Feature。
+    // validShapes 只收集成功生成的形状；selectedShapeIndex 记录当前选中项
+    // 在“有效形状列表”里的位置，随后交给 Viewport3D 做高亮。
+    std::vector<TopoDS_Shape> validShapes;
+    validShapes.reserve(features_.size());
+    int selectedShapeIndex = -1;
 
-    if (!shape.IsNull()) {
-        viewport_->showShape(shape);
-        statusBar()->showMessage(
-            QStringLiteral("共 %1 个特征 · 当前: %2 (%3)")
-                .arg(features_.size())
-                .arg(QString::fromStdString(features_[selectedIndex_]->name()),
-                     QString::fromStdString(features_[selectedIndex_]->id())));
+    for (int i = 0; i < static_cast<int>(features_.size()); ++i) {
+        TopoDS_Shape shape = features_[i]->rebuild();  // 多态：三种 Feature 用同一个调用方式
+        if (shape.IsNull()) {
+            continue;                                  // 生成失败的空形状不交给显示层
+        }
+
+        if (i == selectedIndex_) {
+            selectedShapeIndex = static_cast<int>(validShapes.size());
+        }
+        validShapes.push_back(shape);
     }
+
+    // ② Viewport3D 只认识 TopoDS_Shape，不认识 Feature：继续保持业务与显示解耦。
+    viewport_->showShapes(validShapes, selectedShapeIndex);
+
+    // ③ 状态栏告诉用户当前选中谁，以及成功显示了多少个形状。
+    statusBar()->showMessage(
+        QStringLiteral("共 %1 个特征 · 已显示 %2 个 · 当前: %3 (%4)")
+            .arg(features_.size())
+            .arg(validShapes.size())
+            .arg(QString::fromStdString(features_[selectedIndex_]->name()),
+                 QString::fromStdString(features_[selectedIndex_]->id())));
 }
