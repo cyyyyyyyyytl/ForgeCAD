@@ -53,6 +53,7 @@ private:
     // ---- 私有工具（入口与动作分离：槽只转发，逻辑集中在这里）----
     void createFeatureFromDialog(const QString& type); // 弹对话框 → 造特征 → 追加进集合
     QString nextFeatureId(const QString& type);        // 生成唯一身份证（Box001、Cylinder002…）
+    void deleteSelectedFeature();                      // 删除当前选中特征，并安全选择相邻项
     void rebuildFeatureTree();                         // 用 features_ 整树重建（集合变了就调）
     void selectFeature(int index);                     // 切换选中：改下标 → 面板重建 → 视图刷新
     void rebuildParamPanel();                          // 按"选中特征"动态重建属性面板
