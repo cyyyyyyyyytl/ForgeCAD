@@ -26,6 +26,8 @@
 
 // ---- OCCT：显示物体 ----
 #include <AIS_Shape.hxx>                  // 把 TopoDS_Shape 包装成"可显示物体"
+#include <Quantity_Color.hxx>              // Quantity_Color：给不同显示对象设置演示颜色
+#include <V3d_TypeOfOrientation.hxx>       // OCCT 标准视角：轴测、正视等
 
 #include <spdlog/spdlog.h>                // 日志（记录关键步骤，方便排查）
 #include <cstdio>                         // fprintf：写诊断日志到文件（一定能看到）
@@ -140,13 +142,25 @@ void Viewport3D::showShapes(const std::vector<TopoDS_Shape>& shapes, int selecte
     // ② 每个 TopoDS_Shape 都包装成自己的 AIS_Shape，并放进 3D 场景。
     // 空形状不显示；正常情况下 MainWindow 已经提前过滤掉空形状，
     // 这里再检查一次，是显示层自己的最后一道防御。
-    for (const auto& shape : shapes) {
+    for (std::size_t i = 0; i < shapes.size(); ++i) {
+        const auto& shape = shapes[i];
         if (shape.IsNull()) {
             spdlog::warn("Viewport3D::showShapes skipped a null shape");
             continue;
         }
 
         occ::handle<AIS_Shape> displayed = new AIS_Shape(shape);
+
+        // 给相邻对象轮流使用蓝、绿、橙三种柔和颜色。
+        // 颜色只属于 AIS_Shape（屏幕展示），不会改变 TopoDS_Shape（真实几何）。
+        // 即使创建超过 3 个特征，也会通过 i % 3 循环复用这组颜色。
+        static const Quantity_Color palette[] = {
+            Quantity_Color(0.25, 0.55, 0.90, Quantity_TOC_sRGB),
+            Quantity_Color(0.30, 0.72, 0.48, Quantity_TOC_sRGB),
+            Quantity_Color(0.95, 0.55, 0.22, Quantity_TOC_sRGB)
+        };
+        displayed->SetColor(palette[i % 3]);
+
         // OCCT 8.0: Display(对象, 显示模式, 选择模式, 是否刷新视图)
         context_->Display(displayed, AIS_Shaded, 0, false);
         displayedShapes_.push_back(displayed);
@@ -168,6 +182,20 @@ void Viewport3D::showShapes(const std::vector<TopoDS_Shape>& shapes, int selecte
 // 调整视角到整个模型
 void Viewport3D::fitAll() {
     if (view_) { view_->FitAll(); view_->Redraw(); }
+}
+
+// 切换为右前上方的轴测视角，并让全部模型重新适配窗口。
+void Viewport3D::setAxonometricView() {
+    if (!view_) return;
+    view_->SetProj(V3d_TypeOfOrientation_Zup_AxoRight);
+    fitAll();
+}
+
+// 切换为 Z 轴向上的正视图，并让全部模型重新适配窗口。
+void Viewport3D::setFrontView() {
+    if (!view_) return;
+    view_->SetProj(V3d_TypeOfOrientation_Zup_Front);
+    fitAll();
 }
 
 // ============================================================

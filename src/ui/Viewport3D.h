@@ -43,6 +43,11 @@ public:
     // 视角：让模型"恰好装满"屏幕（W4 完善）
     void fitAll();
 
+    // 演示用标准视角：轴测图适合观察三维形状，正视图适合查看正面轮廓。
+    // 这两个函数只移动相机，不会修改 TopoDS_Shape 的真实几何数据。
+    void setAxonometricView();
+    void setFrontView();
+
 protected:
     // 以下都是 QWidget 的"事件回调"，重写它们让 OCCT 视图跟随窗口变化
     void paintEvent(QPaintEvent*) override;    // 窗口需要重绘时被调用

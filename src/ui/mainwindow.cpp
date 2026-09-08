@@ -11,7 +11,11 @@
 #include "ui_mainwindow.h"
 
 #include <QVBoxLayout>          // 垂直布局（3D 视图/分组框占满用）
+#include <QHBoxLayout>          // 主界面左右布局
 #include <QFormLayout>          // 表单布局（"标签 + 输入框"一行行排）
+#include <QSplitter>            // 可拖动分隔条：左侧面板 / 右侧 3D 视图
+#include <QToolBar>             // 演示工具栏：适配全部、轴测图、正视图
+#include <QAction>              // 工具栏上的动作
 #include <QDialog>              // 新建对话框
 #include <QDialogButtonBox>     // 对话框的 确定/取消 按钮组
 #include <QPushButton>          // 确定/取消 按钮（改中文文字用）
@@ -99,6 +103,45 @@ MainWindow::MainWindow(QWidget *parent)
     vlayout->setContentsMargins(0, 0, 0, 0);
     viewport_ = new forge::ui::Viewport3D(ui->viewportContainer);
     vlayout->addWidget(viewport_);
+
+    // ---- 主界面响应式布局：左侧模型/属性，右侧 3D，可拖动分隔条 ----
+    // .ui 里的控件原来依靠固定坐标摆放，窗口放大后不会跟着伸展。
+    // 这里用布局重新组织它们，让演示时调整窗口大小也能保持整齐。
+    auto* leftPanel = new QWidget(ui->centralwidget);
+    auto* leftLayout = new QVBoxLayout(leftPanel);
+    leftLayout->setContentsMargins(0, 0, 0, 0);
+    leftLayout->setSpacing(8);
+    leftLayout->addWidget(ui->modelTree, 3);   // 模型树占左侧较多高度
+    leftLayout->addWidget(ui->groupBox, 2);    // 属性面板放在模型树下方
+    leftPanel->setMinimumWidth(230);
+
+    auto* splitter = new QSplitter(Qt::Horizontal, ui->centralwidget);
+    splitter->addWidget(leftPanel);
+    splitter->addWidget(ui->viewportContainer);
+    splitter->setStretchFactor(0, 0);          // 左侧保持工具面板宽度
+    splitter->setStretchFactor(1, 1);          // 多余空间主要交给 3D 视图
+    splitter->setSizes({260, 840});
+
+    auto* rootLayout = new QHBoxLayout(ui->centralwidget);
+    rootLayout->setContentsMargins(8, 8, 8, 8);
+    rootLayout->addWidget(splitter);
+
+    // ---- 演示工具栏：常用相机操作不用藏在菜单里 ----
+    auto* viewToolBar = addToolBar(QStringLiteral("视图"));
+    viewToolBar->setMovable(false);
+    QAction* fitAction = viewToolBar->addAction(QStringLiteral("适配全部"));
+    QAction* axoAction = viewToolBar->addAction(QStringLiteral("轴测图"));
+    QAction* frontAction = viewToolBar->addAction(QStringLiteral("正视图"));
+
+    connect(fitAction, &QAction::triggered,
+            viewport_, &forge::ui::Viewport3D::fitAll);
+    connect(axoAction, &QAction::triggered,
+            viewport_, &forge::ui::Viewport3D::setAxonometricView);
+    connect(frontAction, &QAction::triggered,
+            viewport_, &forge::ui::Viewport3D::setFrontView);
+
+    resize(1120, 720);                       // 演示默认尺寸：给 3D 视图留足空间
+    setMinimumSize(820, 560);                // 防止窗口缩得太小导致控件挤在一起
 
     // ---- 模型树接线：QTreeView 需要"数据模型"才有内容 ----
     treeModel_ = new QStandardItemModel(this);   // 父对象 = this，Qt 自动释放
