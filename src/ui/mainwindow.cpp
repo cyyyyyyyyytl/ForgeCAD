@@ -16,7 +16,6 @@
 #include <QSplitter>            // 可拖动分隔条：左侧面板 / 右侧 3D 视图
 #include <QToolBar>             // 演示工具栏：适配全部、轴测图、正视图
 #include <QAction>              // 工具栏上的动作
-#include <QKeySequence>         // Delete 等标准快捷键
 #include <QDialog>              // 新建对话框
 #include <QDialogButtonBox>     // 对话框的 确定/取消 按钮组
 #include <QPushButton>          // 确定/取消 按钮（改中文文字用）
@@ -130,15 +129,10 @@ MainWindow::MainWindow(QWidget *parent)
     // ---- 演示工具栏：常用相机操作不用藏在菜单里 ----
     auto* viewToolBar = addToolBar(QStringLiteral("视图"));
     viewToolBar->setMovable(false);
-    QAction* deleteAction = viewToolBar->addAction(QStringLiteral("删除选中"));
-    deleteAction->setShortcut(QKeySequence::Delete);    // 键盘 Delete 与按钮效果相同
-    viewToolBar->addSeparator();                        // 删除操作与相机操作视觉分组
     QAction* fitAction = viewToolBar->addAction(QStringLiteral("适配全部"));
     QAction* axoAction = viewToolBar->addAction(QStringLiteral("轴测图"));
     QAction* frontAction = viewToolBar->addAction(QStringLiteral("正视图"));
 
-    connect(deleteAction, &QAction::triggered,
-            this, &MainWindow::deleteSelectedFeature);
     connect(fitAction, &QAction::triggered,
             viewport_, &forge::ui::Viewport3D::fitAll);
     connect(axoAction, &QAction::triggered,
@@ -265,52 +259,6 @@ QString MainWindow::nextFeatureId(const QString& type)
     static std::map<QString, int> seqByType;      // 静态：进程内共享；每种类型独立计数
     return type + QString("%1").arg(++seqByType[type], 3, 10, QChar('0'));
     // ++map[key]：第一次访问该类型自动从 0 开始 → 自增为 1 → "Box001"
-}
-
-// ============================================================
-// deleteSelectedFeature：删除当前选中特征
-// ------------------------------------------------------------
-// 当前阶段还没有 Undo/Redo，所以这里是直接删除：
-//   ① 从真正的数据仓库 features_ 擦除对象（unique_ptr 会自动释放它）
-//   ② 调整 selectedIndex_，优先选择原位置后面的对象；若删的是最后一个则选前一个
-//   ③ 重建模型树、属性面板和 3D 场景，保证三个区域保持一致
-// ============================================================
-void MainWindow::deleteSelectedFeature()
-{
-    // 没有合法选中项时不做删除，只给用户一个明确提示。
-    if (selectedIndex_ < 0 || selectedIndex_ >= static_cast<int>(features_.size())) {
-        statusBar()->showMessage(QStringLiteral("请先在模型树中选择要删除的特征"));
-        return;
-    }
-
-    const QString removedId = QString::fromStdString(features_[selectedIndex_]->id());
-
-    // erase 会把被删位置后面的元素向前移动；被删的 unique_ptr 随即自动释放对象。
-    features_.erase(features_.begin() + selectedIndex_);
-
-    if (features_.empty()) {
-        // 最后一个特征也被删除：回到空文档状态。
-        selectedIndex_ = -1;
-        rebuildFeatureTree();
-        rebuildParamPanel();
-        viewport_->showShapes({}, -1);                 // 清空 3D 场景里的旧 AIS_Shape
-        statusBar()->showMessage(
-            QStringLiteral("已删除 %1 · 当前文档为空").arg(removedId));
-        return;
-    }
-
-    // 如果删掉的是最后一个元素，原下标已经越界，改为选择新的最后一个。
-    // 如果删的是中间元素，下一个对象会前移到原下标，可直接保持 selectedIndex_ 不变。
-    if (selectedIndex_ >= static_cast<int>(features_.size())) {
-        selectedIndex_ = static_cast<int>(features_.size()) - 1;
-    }
-
-    rebuildFeatureTree();
-    rebuildParamPanel();
-    refreshViewport();
-    statusBar()->showMessage(
-        QStringLiteral("已删除 %1 · 当前选中 %2")
-            .arg(removedId, QString::fromStdString(features_[selectedIndex_]->id())));
 }
 
 // ============================================================
