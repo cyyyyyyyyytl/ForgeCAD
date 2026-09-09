@@ -19,7 +19,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 option(FORGECAD_BUILD_TESTS "构建单元测试" ON)
 
 # ---- 依赖包：Qt / OCCT / spdlog / gtest ----
-find_package(Qt6 REQUIRED COMPONENTS Widgets Gui Core)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Gui Core Network)
 find_package(OpenCASCADE CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 if(FORGECAD_BUILD_TESTS)

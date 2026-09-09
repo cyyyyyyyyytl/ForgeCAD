@@ -2,8 +2,8 @@
 // MainWindow 实现（多特征 + 模型树版）
 // ------------------------------------------------------------
 // 本文件是"集合驱动界面"的样板：
-//   · features_（集合）是唯一真相源；模型树只是它的展示
-//   · 新建特征 → 追加进集合 → 整树重建 → 自动选中新特征
+//   · document_ 是唯一真相源；模型树只是它的展示
+//   · 新建/修改统一经过 ModelingService，未来 AI 复用同一入口
 //   · 点树 → selectFeature() 换选中 → 属性面板和 3D 视图跟着切
 //   · 属性面板每行输入框变化 → setParameter → rebuild → showShapes（实时联动）
 // ============================================================
@@ -16,16 +16,22 @@
 #include <QDialogButtonBox>     // 对话框的 确定/取消 按钮组
 #include <QPushButton>          // 确定/取消 按钮（改中文文字用）
 #include <QDoubleSpinBox>       // 数字输入框
+#include <QDockWidget>
+#include <QHBoxLayout>
+#include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QString>              // 字符串（中文标签/提示用）
 #include <QStatusBar>           // 状态栏
 #include <QStandardItemModel>   // 模型树的数据模型（含 QStandardItem）
 #include <QTreeView>            // 模型树控件（clicked 信号）
 
 #include "ui/Viewport3D.h"      // 3D 视图控件
-#include "domain/FeatureFactory.h"  // 工厂：造任意特征（含 Feature 完整定义）
+#include "assistant/AgentController.h"
+#include "domain/Feature.h"
+#include "domain/FeatureCatalog.h"
 
 #include <vector>               // std::vector
-#include <map>                  // std::map（每种类型的编号计数器用）
+#include <map>
 #include <string>               // std::string
 #include <stdexcept>            // std::invalid_argument（捕获工厂的抛错）
 
@@ -52,32 +58,6 @@ QString kindLabel(const QString& kind) {
     return kind;   // 还没加中文名的类型先用原名
 }
 
-// ------------------------------------------------------------
-// 每种类型在建"新建对话框"时要哪些参数、默认值是多少
-// （必须和 FeatureFactory 的契约一致：Box=3 个数，Cylinder=2 个数，Sphere=1 个数）
-// ------------------------------------------------------------
-struct ParamDef {
-    const char* name;      // 参数名（与 domain 一致）
-    double defValue;       // 对话框初值
-};
-
-const std::vector<ParamDef>& defsForType(const QString& type) {
-    static const std::vector<ParamDef> boxDefs = {
-        {"length", 100.0}, {"width", 50.0}, {"height", 30.0}
-    };
-    static const std::vector<ParamDef> cylDefs = {
-        {"radius", 20.0}, {"height", 60.0}
-    };
-    static const std::vector<ParamDef> sphDefs = {
-        {"radius", 20.0}
-    };
-    static const std::vector<ParamDef> emptyDefs;   // 未知类型：空清单
-    if (type == QStringLiteral("Box"))      return boxDefs;
-    if (type == QStringLiteral("Cylinder")) return cylDefs;
-    if (type == QStringLiteral("Sphere"))   return sphDefs;
-    return emptyDefs;
-}
-
 } // namespace
 
 // ============================================================
@@ -86,6 +66,7 @@ const std::vector<ParamDef>& defsForType(const QString& type) {
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
+    , modelingService_(document_)
 {
     ui->setupUi(this);          // 从 .ui 加载界面（含菜单、模型树、空属性舞台、3D 容器）
 
@@ -104,22 +85,21 @@ MainWindow::MainWindow(QWidget *parent)
     treeModel_ = new QStandardItemModel(this);   // 父对象 = this，Qt 自动释放
     ui->modelTree->setModel(treeModel_);
     // 用户点树的某一行 → 切到那一行对应的特征
-    // 树现在是"分类文件夹 + 特征子项"结构，行号 ≠ 集合下标，
-    // 所以点击时从节点的数据里取"集合下标"（建树时用 UserRole 存进去的）
+    // 树现在是"分类文件夹 + 特征子项"结构，节点用 UserRole 保存稳定 Feature ID。
     connect(ui->modelTree, &QTreeView::clicked, this,
             [this](const QModelIndex& idx) {
                 if (!idx.isValid()) return;
                 const QVariant data = treeModel_->data(idx, Qt::UserRole);
                 if (!data.isValid()) return;      // 点的是分类文件夹（没存下标）→ 忽略
-                selectFeature(data.toInt());
+                selectFeature(data.toString().toStdString());
             });
 
     // ---- 空文档启动：不预置任何特征 ----
-    // 集合为空、selectedIndex_ = -1（没选中任何东西）。
-    // 后面所有函数都带"越界防御"（先查下标再动手），
-    // 空集合时它们会安全跳过：树是空的、面板留空、视图不出图，不会崩。
+    // 文档为空、selectedFeatureId_ 为空（没选中任何东西）。
+    // 后面所有函数都会先按 ID 查找，空文档时安全跳过。
     rebuildFeatureTree();    // 空树（啥也没有，正常）
     rebuildParamPanel();     // 空面板（容器刚被清空）
+    setupAssistantDock();
     statusBar()->showMessage(QStringLiteral("用菜单\"新建\"添加你的第一个特征"));
     // 注意：这里不再 QTimer 首图——没有特征可显示；等用户新建第一个时
     // createFeatureFromDialog 会自己刷新视图（那时窗口早已显示、视图已就绪）。
@@ -127,7 +107,7 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
-    delete ui;   // 只 delete ui；其余成员：viewport_/treeModel_ 有父控件（Qt 管），features_ 是 unique_ptr 自动释放
+    delete ui;   // Qt 子控件由父对象释放；document_ 用 unique_ptr 自动释放 Feature
 }
 
 // ============================================================
@@ -154,8 +134,8 @@ void MainWindow::on_actionNewSphere_triggered()
 void MainWindow::createFeatureFromDialog(const QString& type)
 {
     // ① 取出该类型要哪些参数（没有 → 类型不受支持，直接返回）
-    const std::vector<ParamDef>& defs = defsForType(type);
-    if (defs.empty()) return;
+    const auto* descriptor = forge::domain::FeatureCatalog::find(type.toStdString());
+    if (!descriptor) return;
 
     // ② 用代码现造对话框：标题 + 每个参数一行（标签+数字框）
     QDialog dlg(this);
@@ -163,12 +143,12 @@ void MainWindow::createFeatureFromDialog(const QString& type)
     auto* form = new QFormLayout(&dlg);       // 表单布局：一行 = 标签 + 输入框
     std::vector<QDoubleSpinBox*> spins;       // 记下所有输入框，确定后好取值
 
-    for (const ParamDef& d : defs) {
+    for (const auto& parameter : descriptor->parameters) {
         auto* spin = new QDoubleSpinBox(&dlg);
-        spin->setRange(1.0, 10000.0);   // 前置校验：输不出非法值
+        spin->setRange(parameter.minimum, parameter.maximum);
         spin->setDecimals(1);
-        spin->setValue(d.defValue);     // 初值 = 默认值
-        form->addRow(paramLabel(d.name), spin);   // addRow(标签文字, 输入框)
+        spin->setValue(parameter.defaultValue);
+        form->addRow(paramLabel(parameter.name), spin);
         spins.push_back(spin);
     }
 
@@ -187,13 +167,14 @@ void MainWindow::createFeatureFromDialog(const QString& type)
     }
 
     // ⑤ 收集数值 → 工厂造特征（个数不对/未知类型会抛，捕获并提示）
-    std::vector<double> sizes;
-    for (auto* s : spins) sizes.push_back(s->value());
+    forge::domain::NumericParameters parameters;
+    for (std::size_t i = 0; i < descriptor->parameters.size(); ++i) {
+        parameters.emplace(descriptor->parameters[i].name, spins[i]->value());
+    }
 
     try {
-        features_.push_back(forge::domain::FeatureFactory::create(
-            type.toStdString(), nextFeatureId(type).toStdString(), sizes));
-        selectedIndex_ = static_cast<int>(features_.size()) - 1;  // 新特征自动选中
+        auto& feature = modelingService_.createFeature(type.toStdString(), parameters);
+        selectedFeatureId_ = feature.id();
     } catch (const std::invalid_argument& e) {
         statusBar()->showMessage(QStringLiteral("创建失败: %1").arg(e.what()));
         return;
@@ -206,29 +187,16 @@ void MainWindow::createFeatureFromDialog(const QString& type)
 }
 
 // ============================================================
-// nextFeatureId：生成唯一身份证（每种类型自己的编号，互不串号）
-// ------------------------------------------------------------
-// 用"类型 → 计数器"的 map：Box 从 Box001 开始，第二个盒子是 Box002；
-// Cylinder/Sphere 各自从 001 开始。之前用全局流水号（Box004）会让人困惑。
-// ============================================================
-QString MainWindow::nextFeatureId(const QString& type)
-{
-    static std::map<QString, int> seqByType;      // 静态：进程内共享；每种类型独立计数
-    return type + QString("%1").arg(++seqByType[type], 3, 10, QChar('0'));
-    // ++map[key]：第一次访问该类型自动从 0 开始 → 自增为 1 → "Box001"
-}
-
-// ============================================================
-// rebuildFeatureTree：用 features_ 整树重建（按类型分组）
+// rebuildFeatureTree：用 document_ 整树重建（按类型分组）
 // ------------------------------------------------------------
 // 结构：
 //   长方体                 ← 分类"文件夹"（文字 = 中文类型名）
-//    ├─ Box001             ← 特征子项（文字 = id；节点里存集合下标 UserRole）
+//    ├─ Box001             ← 特征子项（文字 = id；节点里存稳定 ID 到 UserRole）
 //    └─ Box002
 //   圆柱体
 //    └─ Cylinder001
-// 集合是唯一真相源，树只是展示：每次集合变了就清空重建，并恢复选中高亮。
-// 点击子项时从 UserRole 取出集合下标 → selectFeature。
+// document_ 是唯一真相源，树只是展示：每次集合变了就清空重建，并恢复选中高亮。
+// 点击子项时从 UserRole 取出 Feature ID → selectFeature。
 // ============================================================
 void MainWindow::rebuildFeatureTree()
 {
@@ -237,8 +205,9 @@ void MainWindow::rebuildFeatureTree()
     // ① 按"首次出现顺序"把特征归类：kind -> 属于它的集合下标们
     std::vector<QString> kindOrder;                          // 分类顺序（如 长方体、圆柱体…）
     std::map<QString, std::vector<int>> featuresByKind;      // 类型名 -> 下标列表
-    for (int i = 0; i < static_cast<int>(features_.size()); ++i) {
-        const QString kind = QString::fromStdString(features_[i]->name());  // "Box"/"Cylinder"…
+    const auto& features = document_.features();
+    for (int i = 0; i < static_cast<int>(features.size()); ++i) {
+        const QString kind = QString::fromStdString(features[i]->name());  // "Box"/"Cylinder"…
         if (featuresByKind.find(kind) == featuresByKind.end()) {
             kindOrder.push_back(kind);       // 第一次见到这个类型 → 记下它的位置
         }
@@ -253,10 +222,10 @@ void MainWindow::rebuildFeatureTree()
 
         for (int i : featuresByKind[kind]) {
             auto* child = new QStandardItem(
-                QString::fromStdString(features_[i]->id()));   // 子项文字：id（如 Box002）
+                QString::fromStdString(features[i]->id()));   // 子项文字：id（如 Box002）
             child->setEditable(false);
-            child->setData(i, Qt::UserRole);   // ★把集合下标存进节点（点击时取出来）
-            if (i == selectedIndex_) selectedTreeItem = child;   // 当前选中的 → 记住它
+            child->setData(QString::fromStdString(features[i]->id()), Qt::UserRole);
+            if (features[i]->id() == selectedFeatureId_) selectedTreeItem = child;
             cat->appendRow(child);
         }
         treeModel_->appendRow(cat);            // 文件夹进树
@@ -272,12 +241,12 @@ void MainWindow::rebuildFeatureTree()
 // ============================================================
 // selectFeature：切换当前选中的特征
 // ------------------------------------------------------------
-// 树点击、新建后自动选中，都走这里：换下标 → 面板重建 → 视图刷新
+// 树点击、新建后自动选中，都走这里：换稳定 ID → 面板重建 → 视图刷新
 // ============================================================
-void MainWindow::selectFeature(int index)
+void MainWindow::selectFeature(const std::string& id)
 {
-    if (index < 0 || index >= static_cast<int>(features_.size())) return;  // 越界防御
-    selectedIndex_ = index;
+    if (!document_.findFeature(id)) return;
+    selectedFeatureId_ = id;
     rebuildParamPanel();    // 面板换成这个特征的参数
     refreshViewport();      // 3D 换成这个特征的形状
 }
@@ -299,8 +268,9 @@ void MainWindow::rebuildParamPanel()
     }
 
     // ② 没有选中任何特征 → 面板留空
-    if (selectedIndex_ < 0 || selectedIndex_ >= static_cast<int>(features_.size())) return;
-    const int feaIndex = selectedIndex_;   // 记下来，lambda 里用（此时它不会变）
+    auto* feature = document_.findFeature(selectedFeatureId_);
+    if (!feature) return;
+    const std::string featureId = feature->id();
 
     // ③ 按选中特征的真实参数生成输入框——parameters()（规矩①）驱动 UI！
     auto* form = new QFormLayout(ui->paramPanelContainer);
@@ -308,21 +278,29 @@ void MainWindow::rebuildParamPanel()
     form->setVerticalSpacing(10);               // 行距
     form->setHorizontalSpacing(12);             // 标签和输入框的间距
 
-    const auto& params = features_[feaIndex]->parameters();   // const 引用，避免拷贝
+    const auto& params = feature->parameters();
 
     for (const auto& p : params) {
         auto* spin = new QDoubleSpinBox(ui->paramPanelContainer);
         spin->setDecimals(1);
-        spin->setRange(1.0, 10000.0);         // 前置校验：输不出非法值
+        if (const auto* descriptor = forge::domain::FeatureCatalog::findParameter(
+                feature->name(), p.name())) {
+            spin->setRange(descriptor->minimum, descriptor->maximum);
+        }
         spin->setValue(p.asDouble());         // 初值 = 模型当前值
         form->addRow(paramLabel(p.name()), spin);
 
         // ★ 动态控件没有固定的 on_ 名字 → 手动 connect（lambda 捕获参数名）
         //   值一变：写进"当时选中"的特征 → 立刻重建显示
         connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
-                [this, feaIndex, paramName = p.name()](double v) {
-                    features_[feaIndex]->setParameter(paramName, v);
-                    refreshViewport();
+                [this, featureId, paramName = p.name()](double v) {
+                    try {
+                        modelingService_.setParameter(featureId, paramName, v);
+                        refreshViewport();
+                    } catch (const std::invalid_argument& e) {
+                        statusBar()->showMessage(
+                            QStringLiteral("修改失败: %1").arg(e.what()));
+                    }
                 });
     }
 }
@@ -333,22 +311,23 @@ void MainWindow::rebuildParamPanel()
 void MainWindow::refreshViewport()
 {
     if (!viewport_) return;                                      // 3D 视图还没就绪（启动早期）
-    if (selectedIndex_ < 0 || selectedIndex_ >= static_cast<int>(features_.size())) return;
+    if (!document_.findFeature(selectedFeatureId_)) return;
 
     // ① 依次重建仓库里的所有 Feature。
     // validShapes 只收集成功生成的形状；selectedShapeIndex 记录当前选中项
     // 在“有效形状列表”里的位置，随后交给 Viewport3D 做高亮。
     std::vector<TopoDS_Shape> validShapes;
-    validShapes.reserve(features_.size());
+    const auto& features = document_.features();
+    validShapes.reserve(features.size());
     int selectedShapeIndex = -1;
 
-    for (int i = 0; i < static_cast<int>(features_.size()); ++i) {
-        TopoDS_Shape shape = features_[i]->rebuild();  // 多态：三种 Feature 用同一个调用方式
+    for (int i = 0; i < static_cast<int>(features.size()); ++i) {
+        TopoDS_Shape shape = features[i]->rebuild();  // 多态：三种 Feature 用同一个调用方式
         if (shape.IsNull()) {
             continue;                                  // 生成失败的空形状不交给显示层
         }
 
-        if (i == selectedIndex_) {
+        if (features[i]->id() == selectedFeatureId_) {
             selectedShapeIndex = static_cast<int>(validShapes.size());
         }
         validShapes.push_back(shape);
@@ -360,8 +339,79 @@ void MainWindow::refreshViewport()
     // ③ 状态栏告诉用户当前选中谁，以及成功显示了多少个形状。
     statusBar()->showMessage(
         QStringLiteral("共 %1 个特征 · 已显示 %2 个 · 当前: %3 (%4)")
-            .arg(features_.size())
+            .arg(features.size())
             .arg(validShapes.size())
-            .arg(QString::fromStdString(features_[selectedIndex_]->name()),
-                 QString::fromStdString(features_[selectedIndex_]->id())));
+            .arg(QString::fromStdString(document_.findFeature(selectedFeatureId_)->name()),
+                 QString::fromStdString(selectedFeatureId_)));
+}
+
+void MainWindow::setupAssistantDock()
+{
+    // 面板使用代码创建，暂时不修改 Designer 文件；后续 UI 定稿后可再迁回 .ui。
+    auto* dock = new QDockWidget(QStringLiteral("AI 建模助手"), this);
+    dock->setObjectName(QStringLiteral("assistantDock"));
+    dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+
+    auto* panel = new QWidget(dock);
+    auto* layout = new QVBoxLayout(panel);
+    layout->setContentsMargins(8, 8, 8, 8);
+
+    auto* history = new QPlainTextEdit(panel);
+    history->setReadOnly(true);
+    history->setPlaceholderText(
+        QStringLiteral("示例：创建一个长100、宽50、高30的长方体"));
+
+    auto* inputRow = new QHBoxLayout();
+    auto* input = new QLineEdit(panel);
+    input->setPlaceholderText(QStringLiteral("描述你要创建或修改的模型…"));
+    auto* sendButton = new QPushButton(QStringLiteral("发送"), panel);
+    inputRow->addWidget(input, 1);
+    inputRow->addWidget(sendButton);
+
+    layout->addWidget(history, 1);
+    layout->addLayout(inputRow);
+    panel->setLayout(layout);
+    dock->setWidget(panel);
+    addDockWidget(Qt::RightDockWidgetArea, dock);
+
+    // AgentController 是 QObject 子对象，MainWindow 析构时由 Qt 自动释放。
+    // 它引用的 document_ / modelingService_ 都是 MainWindow 成员，生命周期更长。
+    agentController_ = new forge::assistant::AgentController(
+        document_, modelingService_, this);
+
+    const auto submit = [this, input, history]() {
+        const QString message = input->text().trimmed();
+        if (message.isEmpty() || agentController_->isBusy()) return;
+        history->appendPlainText(QStringLiteral("你：%1").arg(message));
+        input->clear();
+        agentController_->submit(message);
+    };
+    connect(sendButton, &QPushButton::clicked, this, submit);
+    connect(input, &QLineEdit::returnPressed, this, submit);
+
+    connect(agentController_, &forge::assistant::AgentController::assistantMessage,
+            this, [history](const QString& message) {
+                history->appendPlainText(QStringLiteral("助手：%1").arg(message));
+            });
+    connect(agentController_, &forge::assistant::AgentController::errorMessage,
+            this, [history](const QString& message) {
+                history->appendPlainText(QStringLiteral("错误：%1").arg(message));
+            });
+    connect(agentController_, &forge::assistant::AgentController::statusMessage,
+            this, [this](const QString& message) {
+                statusBar()->showMessage(message);
+            });
+    connect(agentController_, &forge::assistant::AgentController::busyChanged,
+            this, [input, sendButton](bool busy) {
+                input->setEnabled(!busy);
+                sendButton->setEnabled(!busy);
+            });
+    // 工具真正修改模型后才刷新 UI；普通问答和查询不会触发不必要的 OCCT 重建。
+    connect(agentController_, &forge::assistant::AgentController::modelChanged,
+            this, [this](const QString& featureId) {
+                selectedFeatureId_ = featureId.toStdString();
+                rebuildFeatureTree();
+                rebuildParamPanel();
+                refreshViewport();
+            });
 }

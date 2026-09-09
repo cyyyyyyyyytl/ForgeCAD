@@ -9,6 +9,34 @@
 
 ---
 
+## 2026-09-09 Document/Service 重构 + DeepSeek AI 建模助手（54/54）
+
+### 已完成
+- **模型所有权下沉**：新增 `ModelDocument`，从 `MainWindow` 接管 Feature 集合、稳定 ID 生成和按 ID 查找；模型树不再保存易失效的 vector 下标。
+- **应用服务统一入口**：新增 `ModelingService`，菜单和 AI 共用创建/修改逻辑；参数修改失败时恢复旧值，避免非法状态留在文档中。
+- **参数登记区收拢**：新增 `FeatureCatalog`，集中登记 Box/Cylinder/Sphere 的参数名、顺序、默认值和范围；新增 `FeatureFactory::createNamed()` 支持 AI 具名 JSON 参数。
+- **C++ Agent 闭环**：新增 `ToolRegistry`、`DeepSeekClient`、`AgentController`；支持 `list_features`、`get_feature`、`create_feature`、`set_parameter` 四个工具，最多循环 6 步。
+- **Qt AI 面板**：右侧 Dock 支持输入自然语言、显示状态/错误和模型回答；工具修改成功后自动刷新模型树、属性面板和 OCCT 视口。
+- **HTTPS 部署修复**：CMake 增加 Qt Network 和 `plugins/tls` 复制；解决发布目录缺少 TLS backend 导致的 `HTTP 0`。
+
+### 关键设计决定
+- 模型只返回工具名和 JSON 参数，真正执行权始终在 C++；ToolRegistry 是白名单和类型校验边界，模型无法直接接触 OCCT。
+- API Key 仅从 `DEEPSEEK_API_KEY` 环境变量读取，不进入源码、日志或 Git。
+- MVP 使用非流式、非 thinking 请求，先避免增量 tool call 拼接和 reasoning history 的额外复杂度。
+- 暂不提供 AI 删除工具；应先完成 Command/Undo，再让危险修改具备可撤销能力。
+
+### 验证
+- Release 构建成功，Qt TLS 插件已部署到 `build/bin/Release/tls`。
+- `ctest --test-dir build -C Release`：**54/54 全部通过**。
+- GUI 启动测试通过；用户已真实验证“创建一个长50、宽50、高50的长方体”能够通过 DeepSeek 调用 C++ 并出图。
+
+### 下一步
+- 优先实现 `CommandManager`、Create/Modify Command 和 Ctrl+Z/Ctrl+Y。
+- 在可撤销基础上恢复删除 Feature，并增加需要确认的 AI `delete_feature`。
+- 再加入位置/旋转 Transform，让 AI 能理解“移动到上方”等空间建模指令。
+
+---
+
 ## 2026-09-09 回退展示型 UI，后续由用户使用 Qt Designer 完成（41/41）
 
 ### 本次决定

@@ -5,7 +5,13 @@ set(CMAKE_AUTOMOC ON)
 
 add_library(forgecore
     core/Version.cpp
+    application/ModelDocument.cpp
+    application/ModelingService.cpp
+    assistant/AgentController.cpp
+    assistant/DeepSeekClient.cpp
+    assistant/ToolRegistry.cpp
     domain/BoxFeature.cpp
+    domain/FeatureCatalog.cpp
     geometry/ShapeFactory.cpp
     ui/Viewport3D.cpp
     domain/CylinderFeature.cpp
@@ -20,6 +26,7 @@ target_include_directories(forgecore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # 链接共享依赖
 target_link_libraries(forgecore PUBLIC
     Qt6::Core
+    Qt6::Network
     Qt6::Widgets
     ${OCCT_LIBRARIES}
     spdlog::spdlog

@@ -47,4 +47,39 @@ std::unique_ptr<Feature> FeatureFactory::create(const std::string& type,
     throw std::invalid_argument("未知特征类型: " + type);
 }
 
+std::unique_ptr<Feature> FeatureFactory::createNamed(
+    const std::string& type,
+    const std::string& id,
+    const NumericParameters& parameters)
+{
+    // 先用 Catalog 校验“外部协议参数”，再复用旧的、经过测试的位置参数构造逻辑。
+    // 这样 AI 可以安全使用具名 JSON，原有 C++ 调用和测试也不需要一次性推倒重写。
+    const FeatureDescriptor* descriptor = FeatureCatalog::find(type);
+    if (!descriptor) {
+        throw std::invalid_argument("未知特征类型: " + type);
+    }
+
+    if (parameters.size() != descriptor->parameters.size()) {
+        throw std::invalid_argument(type + " 参数数量不正确");
+    }
+
+    // unordered_map 没有稳定顺序；必须按 Catalog 的声明顺序重排。
+    // 例如 Box 始终转成 [length, width, height] 后再调用旧 Factory。
+    std::vector<double> orderedValues;
+    orderedValues.reserve(descriptor->parameters.size());
+    for (const auto& parameter : descriptor->parameters) {
+        const auto it = parameters.find(parameter.name);
+        if (it == parameters.end()) {
+            throw std::invalid_argument(type + " 缺少参数: " + parameter.name);
+        }
+        if (it->second < parameter.minimum || it->second > parameter.maximum) {
+            throw std::invalid_argument(type + " 参数超出范围: " + parameter.name);
+        }
+        orderedValues.push_back(it->second);
+    }
+
+    // 参数数量相等且所有登记参数都存在，因此不会夹带未登记参数。
+    return create(type, id, orderedValues);
+}
+
 } // namespace forge::domain

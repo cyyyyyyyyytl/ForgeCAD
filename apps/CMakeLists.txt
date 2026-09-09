@@ -36,6 +36,12 @@ if(WIN32)
     )
     add_custom_command(TARGET forgecad POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "$<TARGET_FILE_DIR:Qt6::Core>/../plugins/tls"
+            "$<TARGET_FILE_DIR:forgecad>/tls"
+        COMMENT "copy Qt TLS backends"
+    )
+    add_custom_command(TARGET forgecad POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${VCPKG_INSTALLED_DIR}/x64-windows/bin"
             "$<TARGET_FILE_DIR:forgecad>"
         COMMENT "copy vcpkg DLL"

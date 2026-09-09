@@ -3,6 +3,7 @@
 #include <string>                         // std::string（类型名）
 #include <vector>                         // std::vector（参数个数不定，用容器装）
 #include "domain/Feature.h"               // 返回基类指针——调用方只认识 Feature
+#include "domain/FeatureCatalog.h"        // NumericParameters：具名参数，供 UI/AI 共用
 
 namespace forge::domain {
 
@@ -27,6 +28,11 @@ public:
     static std::unique_ptr<Feature> create(const std::string& type,
                                            const std::string& id,
                                            const std::vector<double>& sizes);
+
+    // 具名参数入口：AI Tool Call 不依赖数组下标，更适合作为正式应用接口。
+    static std::unique_ptr<Feature> createNamed(const std::string& type,
+                                                const std::string& id,
+                                                const NumericParameters& parameters);
 };
 
 } // namespace forge::domain
