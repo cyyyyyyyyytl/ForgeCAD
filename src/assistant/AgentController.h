@@ -25,34 +25,35 @@ class AgentController : public QObject {
     Q_OBJECT
 
 public:
+    // 注入 Document 和 ModelingService，让工具能读写当前窗口对应的模型。
     AgentController(application::ModelDocument& document,
                     application::ModelingService& modelingService,
                     QObject* parent = nullptr);
 
-    void submit(const QString& userMessage);
-    bool isBusy() const { return busy_; }
+    void submit(const QString& userMessage); // 接收一条用户自然语言并启动 Agent 循环。
+    bool isBusy() const { return busy_; }    // UI 用它阻止用户重复提交并发请求。
 
 signals:
-    void assistantMessage(const QString& message);
-    void statusMessage(const QString& message);
-    void errorMessage(const QString& message);
-    void modelChanged(const QString& featureId);
-    void busyChanged(bool busy);
+    void assistantMessage(const QString& message); // 最终自然语言答案，追加到聊天记录。
+    void statusMessage(const QString& message);    // 短状态，显示在 MainWindow 状态栏。
+    void errorMessage(const QString& message);     // 网络/协议/循环错误，显示在聊天区。
+    void modelChanged(const QString& featureId);   // 工具修改成功，通知 UI 选中并重建模型。
+    void busyChanged(bool busy);                   // 通知 UI 启用或禁用输入框和发送按钮。
 
 private slots:
-    void handleResponse(const QJsonObject& response);
-    void handleError(const QString& error);
+    void handleResponse(const QJsonObject& response); // DeepSeek 请求成功后的协议分支处理。
+    void handleError(const QString& error);           // 任意请求失败后的统一收尾。
 
 private:
-    void requestNextTurn();
-    void setBusy(bool busy);
+    void requestNextTurn();      // 携带最新 messages 和 tools 发起下一轮请求。
+    void setBusy(bool busy);     // 集中更新 busy_ 并只在变化时发信号。
 
-    static constexpr int MaxAgentSteps = 6;
-    DeepSeekClient client_;
-    ToolRegistry tools_;
-    QJsonArray messages_;
-    int currentStep_ = 0;
-    bool busy_ = false;
+    static constexpr int MaxAgentSteps = 6; // 单次用户请求的最大工具轮数，防止死循环。
+    DeepSeekClient client_;                // 只负责异步 HTTP，不理解 CAD 工具。
+    ToolRegistry tools_;                   // 白名单工具定义和本地执行入口。
+    QJsonArray messages_;                  // 完整对话历史：system/user/assistant/tool。
+    int currentStep_ = 0;                  // 当前请求已经完成的工具轮数。
+    bool busy_ = false;                    // true 表示请求链尚未结束。
 };
 
 } // namespace forge::assistant

@@ -11,15 +11,15 @@ namespace forge::domain {
 using NumericParameters = std::unordered_map<std::string, double>;
 
 struct ParameterDescriptor {
-    std::string name;
-    double defaultValue;
-    double minimum;
-    double maximum;
+    std::string name;     // 语言无关的协议名，例如 length；UI 可另行翻译。
+    double defaultValue;  // 新建对话框和模板未指定时使用的推荐值。
+    double minimum;       // 对外入口允许的最小值。
+    double maximum;       // 对外入口允许的最大值。
 };
 
 struct FeatureDescriptor {
-    std::string type;
-    std::vector<ParameterDescriptor> parameters;
+    std::string type;                            // Feature 类型名，例如 Box。
+    std::vector<ParameterDescriptor> parameters; // 有序参数表，同时定义构造顺序。
 };
 
 // ============================================================
@@ -33,8 +33,9 @@ struct FeatureDescriptor {
 // ============================================================
 class FeatureCatalog {
 public:
-    static const std::vector<FeatureDescriptor>& all();
-    static const FeatureDescriptor* find(std::string_view type);
+    static const std::vector<FeatureDescriptor>& all(); // 获取全部只读登记项。
+    static const FeatureDescriptor* find(std::string_view type); // 按类型查找。
+    // 在指定 Feature 类型内部按参数名查找；任一级不存在都返回 nullptr。
     static const ParameterDescriptor* findParameter(std::string_view type,
                                                     std::string_view parameterName);
 };

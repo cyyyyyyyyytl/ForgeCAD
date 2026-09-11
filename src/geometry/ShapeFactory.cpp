@@ -6,12 +6,20 @@
 
 namespace forge::geometry {
 
+// ------------------------------------------------------------
+// makeBox：用 OCCT 创建以原点为起点、沿 XYZ 正方向延伸的长方体
+//   length/width/height 分别对应 X/Y/Z 尺寸。
+//   ShapeFactory 不抛出几何异常给 UI，而是记录日志并返回空 TopoDS_Shape；
+//   上层可用 IsNull() 统一判断几何构造是否成功。
+// ------------------------------------------------------------
 TopoDS_Shape ShapeFactory::makeBox(double length, double width, double height) {
+    // 先在进入 OCCT 前拒绝非正尺寸，减少内核异常和无意义计算。
     if (length <= 0 || width <= 0 || height <= 0) {
         spdlog::error("ShapeFactory::makeBox invalid dims: {}x{}x{}", length, width, height);
         return TopoDS_Shape();
     }
     try {
+        // maker 是栈对象，离开作用域后自动析构；Shape() 返回 OCCT 拓扑形状句柄。
         BRepPrimAPI_MakeBox maker(length, width, height);
         // OCCT 8 的 IsDone() 偶发未置位，以 Shape() 是否成功且有效为准
         if (!maker.IsDone()) {
@@ -24,16 +32,19 @@ TopoDS_Shape ShapeFactory::makeBox(double length, double width, double height) {
             spdlog::warn("ShapeFactory::makeBox IsDone flag false but shape valid");
             return s;
         }
+        // 正常路径取出构造结果，并记录成功尺寸便于排查用户输入。
         auto s = maker.Shape();
         if (!s.IsNull()) {
             spdlog::info("ShapeFactory::makeBox created {}x{}x{}", length, width, height);
         }
         return s;
     } catch (const Standard_Failure& e) {
+        // Standard_Failure 是 OCCT 自己的异常基类，优先保留内核提供的诊断消息。
         spdlog::error("ShapeFactory::makeBox OCCT exception: {}",
                       e.GetMessageString() ? e.GetMessageString() : "unknown");
         return TopoDS_Shape();
     } catch (...) {
+        // 最后一层兜底，避免未知异常越过几何层导致 Qt 事件循环退出。
         spdlog::error("ShapeFactory::makeBox unknown exception");
         return TopoDS_Shape();
     }

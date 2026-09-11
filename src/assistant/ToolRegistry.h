@@ -22,21 +22,24 @@ namespace forge::assistant {
 // ============================================================
 class ToolRegistry {
 public:
+    // 两个引用均为非拥有关系，实际生命周期由 MainWindow 管理。
     ToolRegistry(application::ModelDocument& document,
                  application::ModelingService& modelingService);
 
-    QJsonArray schemas() const;
-    QJsonObject execute(const QString& toolName, const QJsonObject& arguments);
+    QJsonArray schemas() const; // 返回发给模型的全部 function tool JSON Schema。
+    QJsonObject execute(const QString& toolName,
+                        const QJsonObject& arguments); // 统一白名单分发并封装错误。
 
 private:
+    // 领域对象序列化辅助函数：只暴露 ID、类型和参数，不暴露 OCCT 句柄。
     QJsonObject featureToJson(const domain::Feature& feature) const;
-    QJsonObject listFeatures() const;
-    QJsonObject getFeature(const QJsonObject& arguments) const;
-    QJsonObject createFeature(const QJsonObject& arguments);
-    QJsonObject setParameter(const QJsonObject& arguments);
+    QJsonObject listFeatures() const;                         // list_features 实现。
+    QJsonObject getFeature(const QJsonObject& arguments) const; // get_feature 实现。
+    QJsonObject createFeature(const QJsonObject& arguments);  // create_feature 实现。
+    QJsonObject setParameter(const QJsonObject& arguments);   // set_parameter 实现。
 
-    application::ModelDocument& document_;
-    application::ModelingService& modelingService_;
+    application::ModelDocument& document_;           // 查询当前模型状态。
+    application::ModelingService& modelingService_;  // 执行受校验的模型修改。
 };
 
 } // namespace forge::assistant

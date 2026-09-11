@@ -348,19 +348,23 @@ void MainWindow::refreshViewport()
 void MainWindow::setupAssistantDock()
 {
     // 面板使用代码创建，暂时不修改 Designer 文件；后续 UI 定稿后可再迁回 .ui。
+    // QDockWidget 允许用户拖动、停靠，且其父对象为主窗口，会随主窗口自动销毁。
     auto* dock = new QDockWidget(QStringLiteral("AI 建模助手"), this);
     dock->setObjectName(QStringLiteral("assistantDock"));
     dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 
+    // panel 是 Dock 内唯一的根控件；垂直布局把上方历史区和下方输入区组合起来。
     auto* panel = new QWidget(dock);
     auto* layout = new QVBoxLayout(panel);
     layout->setContentsMargins(8, 8, 8, 8);
 
+    // 历史区只负责展示对话，不允许用户直接改写已经发送或返回的内容。
     auto* history = new QPlainTextEdit(panel);
     history->setReadOnly(true);
     history->setPlaceholderText(
         QStringLiteral("示例：创建一个长100、宽50、高30的长方体"));
 
+    // 输入框占据剩余水平空间，发送按钮保持自身建议宽度。
     auto* inputRow = new QHBoxLayout();
     auto* input = new QLineEdit(panel);
     input->setPlaceholderText(QStringLiteral("描述你要创建或修改的模型…"));
@@ -368,6 +372,7 @@ void MainWindow::setupAssistantDock()
     inputRow->addWidget(input, 1);
     inputRow->addWidget(sendButton);
 
+    // 历史区的拉伸因子为 1，窗口变高时主要扩展对话显示空间。
     layout->addWidget(history, 1);
     layout->addLayout(inputRow);
     panel->setLayout(layout);
@@ -379,9 +384,12 @@ void MainWindow::setupAssistantDock()
     agentController_ = new forge::assistant::AgentController(
         document_, modelingService_, this);
 
+    // 点击按钮和按回车共用同一提交逻辑，避免两条入口出现行为差异。
     const auto submit = [this, input, history]() {
         const QString message = input->text().trimmed();
+        // 忽略空白输入；请求进行中也禁止重入，避免两轮工具调用交叉修改文档。
         if (message.isEmpty() || agentController_->isBusy()) return;
+        // 先把用户消息写入历史并清空输入，再异步交给 Agent 处理。
         history->appendPlainText(QStringLiteral("你：%1").arg(message));
         input->clear();
         agentController_->submit(message);
@@ -389,6 +397,7 @@ void MainWindow::setupAssistantDock()
     connect(sendButton, &QPushButton::clicked, this, submit);
     connect(input, &QLineEdit::returnPressed, this, submit);
 
+    // 正常回答和错误使用不同前缀，让用户能快速区分模型回复与请求故障。
     connect(agentController_, &forge::assistant::AgentController::assistantMessage,
             this, [history](const QString& message) {
                 history->appendPlainText(QStringLiteral("助手：%1").arg(message));
@@ -397,10 +406,12 @@ void MainWindow::setupAssistantDock()
             this, [history](const QString& message) {
                 history->appendPlainText(QStringLiteral("错误：%1").arg(message));
             });
+    // 短暂的执行阶段提示放入状态栏，避免用技术细节污染对话历史。
     connect(agentController_, &forge::assistant::AgentController::statusMessage,
             this, [this](const QString& message) {
                 statusBar()->showMessage(message);
             });
+    // 网络请求和工具循环执行期间锁住输入，既给出视觉反馈，也形成第二层防重入保护。
     connect(agentController_, &forge::assistant::AgentController::busyChanged,
             this, [input, sendButton](bool busy) {
                 input->setEnabled(!busy);
@@ -409,6 +420,7 @@ void MainWindow::setupAssistantDock()
     // 工具真正修改模型后才刷新 UI；普通问答和查询不会触发不必要的 OCCT 重建。
     connect(agentController_, &forge::assistant::AgentController::modelChanged,
             this, [this](const QString& featureId) {
+                // 选中新建或刚修改的特征，再同步重建树、参数表和三维视图。
                 selectedFeatureId_ = featureId.toStdString();
                 rebuildFeatureTree();
                 rebuildParamPanel();

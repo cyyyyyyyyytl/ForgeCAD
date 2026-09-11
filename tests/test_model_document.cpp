@@ -6,6 +6,14 @@
 using forge::application::ModelDocument;
 using forge::domain::FeatureFactory;
 
+// ============================================================
+// ModelDocumentTest：验证模型所有权、稳定 ID 和查找契约
+// ------------------------------------------------------------
+// 这些能力会被 UI、Command、文件导入和 AI 同时依赖，所以测试只针对
+// 纯 C++ Document，不需要启动 Qt 窗口或 OCCT Viewer。
+// ============================================================
+
+// 同类特征连续编号，不同类型各自从 001 开始。
 TEST(ModelDocumentTest, GeneratesIndependentStableIdsByType)
 {
     ModelDocument document;
@@ -14,6 +22,7 @@ TEST(ModelDocumentTest, GeneratesIndependentStableIdsByType)
     EXPECT_EQ(document.nextFeatureId("Sphere"), "Sphere001");
 }
 
+// 导入场景可能先加入一个带现成 ID 的 Feature；生成器必须跳过冲突 ID。
 TEST(ModelDocumentTest, GeneratedIdSkipsAnExistingImportedId)
 {
     ModelDocument document;
@@ -22,23 +31,28 @@ TEST(ModelDocumentTest, GeneratedIdSkipsAnExistingImportedId)
     EXPECT_EQ(document.nextFeatureId("Box"), "Box002");
 }
 
+// addFeature 应接管 unique_ptr 所有权，并能通过稳定 ID 找回同一个堆对象。
 TEST(ModelDocumentTest, OwnsAndFindsFeaturesById)
 {
     ModelDocument document;
     auto& added = document.addFeature(
         FeatureFactory::create("Sphere", "Sphere001", {20.0}));
 
+    // 返回引用、容器元素和 findFeature 三者必须指向同一个 Feature。
     EXPECT_EQ(added.id(), "Sphere001");
     EXPECT_EQ(document.features().size(), 1u);
     EXPECT_EQ(document.findFeature("Sphere001"), &added);
     EXPECT_EQ(document.findFeature("missing"), nullptr);
 }
 
+// 空指针会造成遍历崩溃，重复 ID 会破坏定位语义，两者都必须拒绝。
 TEST(ModelDocumentTest, RejectsNullAndDuplicateFeatures)
 {
+    // 第一层防御：Document 中不允许出现空 Feature 槽位。
     ModelDocument document;
     EXPECT_THROW(document.addFeature(nullptr), std::invalid_argument);
 
+    // 第二层防御：同一文档内的 Feature ID 必须唯一。
     document.addFeature(FeatureFactory::create("Sphere", "Sphere001", {20.0}));
     EXPECT_THROW(
         document.addFeature(FeatureFactory::create("Sphere", "Sphere001", {30.0})),

@@ -9,6 +9,7 @@
 namespace forge::application {
 
 ModelingService::ModelingService(ModelDocument& document)
+    // 服务不拥有文档；MainWindow 负责保证 document_ 比本服务活得更久。
     : document_(document)
 {
 }
@@ -17,6 +18,8 @@ domain::Feature& ModelingService::createFeature(
     const std::string& type,
     const domain::NumericParameters& parameters)
 {
+    // “生成 ID -> 创建对象 -> 领域校验 -> 写入文档”构成一次完整的创建事务；
+    // 任一步抛出异常时，尚未 addFeature，因此文档不会留下半成品。
     // ID 属于文档级身份管理，不让 UI 或 AI 自己编造，避免重复。
     const std::string id = document_.nextFeatureId(type);
     // AI 返回的是具名参数；Factory 会根据 Catalog 转为具体构造函数需要的顺序。
@@ -34,6 +37,7 @@ void ModelingService::setParameter(
     std::string_view parameterName,
     double value)
 {
+    // 参数修改统一经过服务层，使 UI 和 AI 工具共享同样的查找、范围和回滚规则。
     // 外部入口只传稳定 ID，不保存 vector 下标或裸指针。
     domain::Feature* feature = document_.findFeature(featureId);
     if (!feature) {
@@ -42,6 +46,7 @@ void ModelingService::setParameter(
 
     const domain::ParameterDescriptor* descriptor =
         domain::FeatureCatalog::findParameter(feature->name(), parameterName);
+    // Catalog 是参数名和允许范围的单一来源，不在调用端复制判断逻辑。
     if (!descriptor) {
         throw std::invalid_argument(feature->name() + " 没有参数: "
                                     + std::string(parameterName));

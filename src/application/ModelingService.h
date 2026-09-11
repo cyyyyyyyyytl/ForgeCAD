@@ -23,16 +23,19 @@ class ModelDocument;
 // ============================================================
 class ModelingService {
 public:
+    // Service 不拥有 Document，调用方必须保证 Document 生命周期更长。
     explicit ModelingService(ModelDocument& document);
 
+    // 根据类型和具名参数创建特征，自动生成稳定 ID 并加入文档。
     domain::Feature& createFeature(const std::string& type,
                                    const domain::NumericParameters& parameters);
+    // 按稳定 ID 修改单个参数；参数不存在或越界时抛 invalid_argument。
     void setParameter(std::string_view featureId,
                       std::string_view parameterName,
                       double value);
 
 private:
-    ModelDocument& document_;
+    ModelDocument& document_; // 当前操作目标，不参与所有权管理。
 };
 
 } // namespace forge::application

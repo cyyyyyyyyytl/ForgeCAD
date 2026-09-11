@@ -18,17 +18,19 @@ class DeepSeekClient : public QObject {
     Q_OBJECT
 
 public:
+    // QObject parent 只负责 Client 自身生命周期；network_ 是值成员自动释放。
     explicit DeepSeekClient(QObject* parent = nullptr);
 
+    // 发送一轮完整 Chat Completions 请求；结果通过下面两个信号异步返回。
     void send(const QJsonArray& messages, const QJsonArray& tools);
-    bool hasApiKey() const;
+    bool hasApiKey() const; // 只检查环境变量是否存在，不读取到 UI 或日志。
 
 signals:
-    void responseReceived(const QJsonObject& response);
-    void requestFailed(const QString& error);
+    void responseReceived(const QJsonObject& response); // 收到合法 2xx JSON 对象。
+    void requestFailed(const QString& error);           // 网络、HTTP 或 JSON 解析失败。
 
 private:
-    QNetworkAccessManager network_;
+    QNetworkAccessManager network_; // Qt 异步网络管理器，必须在所属线程使用。
 };
 
 } // namespace forge::assistant
