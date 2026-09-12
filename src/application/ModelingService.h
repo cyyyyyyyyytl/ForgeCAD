@@ -1,5 +1,7 @@
 #pragma once
 
+#include "application/CommandManager.h"
+
 #include "domain/FeatureCatalog.h"
 
 #include <string>
@@ -33,9 +35,16 @@ public:
     void setParameter(std::string_view featureId,
                       std::string_view parameterName,
                       double value);
+    // 撤销或重做最近一次通过本服务完成的建模操作。
+    void undo();
+    void redo();
+
+    bool canUndo() const;
+    bool canRedo() const;
 
 private:
     ModelDocument& document_; // 当前操作目标，不参与所有权管理。
+    CommandManager commandManager_;
 };
 
 } // namespace forge::application

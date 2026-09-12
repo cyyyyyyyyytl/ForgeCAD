@@ -34,6 +34,52 @@ TEST(ModelingServiceTest, CreatesFeatureThroughNamedApplicationInterface)
     EXPECT_FALSE(feature.rebuild().IsNull());
 }
 
+// 创建操作也应进入统一命令历史，并在 Undo/Redo 之间保持同一个 Feature 对象。
+TEST(ModelingServiceTest, CreatedFeatureCanBeUndoneAndRedone)
+{
+    ModelDocument document;
+    ModelingService service(document);
+    auto& feature = service.createFeature("Box", {
+        {"length", 50.0},
+        {"width", 40.0},
+        {"height", 30.0},
+    });
+    const auto* originalAddress = &feature;
+
+    EXPECT_EQ(document.findFeature("Box001"), originalAddress);
+    EXPECT_TRUE(service.canUndo());
+
+    service.undo();
+    EXPECT_EQ(document.findFeature("Box001"), nullptr);
+    EXPECT_TRUE(service.canRedo());
+
+    service.redo();
+    EXPECT_EQ(document.findFeature("Box001"), originalAddress);
+    EXPECT_TRUE(service.canUndo());
+    EXPECT_FALSE(service.canRedo());
+}
+
+// 连续的“创建 + 修改”必须严格按后进先出顺序撤销，再按原顺序重做。
+TEST(ModelingServiceTest, CreateAndModifyFollowLifoHistoryOrder)
+{
+    ModelDocument document;
+    ModelingService service(document);
+    auto& feature = service.createFeature("Sphere", {{"radius", 20.0}});
+
+    service.setParameter(feature.id(), "radius", 35.0);
+    service.undo();
+    EXPECT_DOUBLE_EQ(feature.parameters()[0].asDouble(), 20.0);
+    EXPECT_NE(document.findFeature("Sphere001"), nullptr);
+
+    service.undo();
+    EXPECT_EQ(document.findFeature("Sphere001"), nullptr);
+
+    service.redo();
+    EXPECT_EQ(document.findFeature("Sphere001"), &feature);
+    service.redo();
+    EXPECT_DOUBLE_EQ(feature.parameters()[0].asDouble(), 35.0);
+}
+
 // 通过字符串 ID 修改参数，模拟属性面板或 AI set_parameter 工具的真实调用。
 TEST(ModelingServiceTest, ModifiesParameterByStableFeatureId)
 {
@@ -45,6 +91,33 @@ TEST(ModelingServiceTest, ModifiesParameterByStableFeatureId)
     service.setParameter(feature.id(), "radius", 35.0);
 
     EXPECT_DOUBLE_EQ(feature.parameters()[0].asDouble(), 35.0);
+}
+
+// 验证 UI 和 AI 共用的 Service 入口已经真正接入命令历史。
+TEST(ModelingServiceTest, ParameterModificationCanBeUndoneAndRedone)
+{
+    ModelDocument document;
+    ModelingService service(document);
+    auto& feature = service.createFeature("Sphere", {{"radius", 20.0}});
+
+    // 修改成功后，命令位于 Undo 栈；Sphere 半径变成新值 35。
+    service.setParameter(feature.id(), "radius", 35.0);
+    EXPECT_DOUBLE_EQ(feature.parameters()[0].asDouble(), 35.0);
+    EXPECT_TRUE(service.canUndo());
+    EXPECT_FALSE(service.canRedo());
+
+    // Service 将 Undo 转发给内部 CommandManager，命令恢复旧值 20。
+    service.undo();
+    EXPECT_DOUBLE_EQ(feature.parameters()[0].asDouble(), 20.0);
+    // 修改命令已撤销，但更早的“创建 Sphere”命令仍可继续撤销。
+    EXPECT_TRUE(service.canUndo());
+    EXPECT_TRUE(service.canRedo());
+
+    // Redo 再次执行同一命令，半径重新变成 35。
+    service.redo();
+    EXPECT_DOUBLE_EQ(feature.parameters()[0].asDouble(), 35.0);
+    EXPECT_TRUE(service.canUndo());
+    EXPECT_FALSE(service.canRedo());
 }
 
 // 验证三类错误：越界值、错误参数名、错误 Feature ID。

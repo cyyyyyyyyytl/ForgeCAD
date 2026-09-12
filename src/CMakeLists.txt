@@ -8,6 +8,9 @@ add_library(forgecore
     # core：版本等最底层公共能力。
     core/Version.cpp
     # application：UI/AI 共用的建模用例和模型所有权。
+    application/CommandManager.cpp
+    application/CreateFeatureCommand.cpp
+    application/ModifyParameterCommand.cpp
     application/ModelDocument.cpp
     application/ModelingService.cpp
     # assistant：DeepSeek 网络适配、Agent 循环和工具白名单。

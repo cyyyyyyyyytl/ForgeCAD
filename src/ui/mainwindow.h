@@ -42,6 +42,8 @@ private slots:
     void on_actionNewBox_triggered();       // 菜单"新建→长方体"
     void on_actionNewCylinder_triggered();  // 菜单"新建→圆柱体"
     void on_actionNewSphere_triggered();    // 菜单"新建→球体"
+    void on_actionUndo_triggered();         // 编辑→撤销（Ctrl+Z）
+    void on_actionRedo_triggered();         // 编辑→重做（Ctrl+Y）
 
 private:
     Ui::MainWindow *ui;
@@ -60,6 +62,7 @@ private:
     void selectFeature(const std::string& id);         // 按稳定 ID 切换选中项
     void rebuildParamPanel();                          // 按"选中特征"动态重建属性面板
     void refreshViewport();                            // 选中特征 → 重建形状 → 显示 → 状态栏
+    void refreshAfterHistoryChange();                  // Undo/Redo 后统一修正选中项并刷新 UI
     void setupAssistantDock();                         // 创建 AI 助手面板并连接 Agent 信号
 };
 

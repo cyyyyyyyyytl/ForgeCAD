@@ -1,9 +1,12 @@
 #include "application/ModelingService.h"
 
+#include "application/CreateFeatureCommand.h"
 #include "application/ModelDocument.h"
+#include "application/ModifyParameterCommand.h"
 #include "domain/Feature.h"
 #include "domain/FeatureFactory.h"
 
+#include <memory>
 #include <stdexcept>
 
 namespace forge::application {
@@ -29,7 +32,11 @@ domain::Feature& ModelingService::createFeature(
     if (!validationError.empty()) {
         throw std::invalid_argument(validationError);
     }
-    return document_.addFeature(std::move(feature));
+    // 保存 ID 后把 Feature 交给创建命令；命令执行成功后对象由 Document 持有。
+    // 再按稳定 ID 找回引用，调用方无需了解命令对象的所有权流转。
+    commandManager_.executeCommand(
+        std::make_unique<CreateFeatureCommand>(document_, std::move(feature)));
+    return *document_.findFeature(id);
 }
 
 void ModelingService::setParameter(
@@ -37,46 +44,39 @@ void ModelingService::setParameter(
     std::string_view parameterName,
     double value)
 {
-    // 参数修改统一经过服务层，使 UI 和 AI 工具共享同样的查找、范围和回滚规则。
-    // 外部入口只传稳定 ID，不保存 vector 下标或裸指针。
+    // Service 先按稳定 ID 找到真正需要修改的 Feature。
     domain::Feature* feature = document_.findFeature(featureId);
     if (!feature) {
-        throw std::invalid_argument("找不到 Feature: " + std::string(featureId));
+        throw std::invalid_argument(
+            "找不到 Feature: " + std::string(featureId));
     }
 
-    const domain::ParameterDescriptor* descriptor =
-        domain::FeatureCatalog::findParameter(feature->name(), parameterName);
-    // Catalog 是参数名和允许范围的单一来源，不在调用端复制判断逻辑。
-    if (!descriptor) {
-        throw std::invalid_argument(feature->name() + " 没有参数: "
-                                    + std::string(parameterName));
-    }
-    if (value < descriptor->minimum || value > descriptor->maximum) {
-        throw std::invalid_argument("参数 " + std::string(parameterName) + " 超出允许范围");
-    }
+    // 创建一张“修改参数命令卡”，再交给 CommandManager 执行和保存。
+    commandManager_.executeCommand(
+        std::make_unique<ModifyParameterCommand>(
+            *feature,
+            std::string(parameterName),
+            value));
+}
 
-    // 修改前保存旧值：当前虽未实现完整 Undo，但至少保证失败不会污染文档状态。
-    double oldValue = 0.0;
-    bool found = false;
-    for (const auto& parameter : feature->parameters()) {
-        if (parameter.name() == parameterName) {
-            oldValue = parameter.asDouble();
-            found = true;
-            break;
-        }
-    }
-    if (!found) {
-        throw std::invalid_argument(feature->name() + " 没有参数: "
-                                    + std::string(parameterName));
-    }
+void ModelingService::undo()
+{
+    commandManager_.undo();
+}
 
-    feature->setParameter(std::string(parameterName), value);
-    const std::string validationError = feature->validate();
-    if (!validationError.empty()) {
-        // 事务式“小回滚”：领域校验失败，恢复到调用前的合法值。
-        feature->setParameter(std::string(parameterName), oldValue);
-        throw std::invalid_argument(validationError);
-    }
+void ModelingService::redo()
+{
+    commandManager_.redo();
+}
+
+bool ModelingService::canUndo() const
+{
+    return commandManager_.canUndo();
+}
+
+bool ModelingService::canRedo() const
+{
+    return commandManager_.canRedo();
 }
 
 } // namespace forge::application

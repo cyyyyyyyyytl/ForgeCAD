@@ -9,6 +9,34 @@
 
 ---
 
+## 2026-09-12 Command 双栈 + 创建/参数修改 Undo/Redo（68/68）
+
+### 已完成
+- 新增 `Command` 抽象接口与 `CommandManager` 双栈；新命令成功执行后进入 Undo 栈，Undo/Redo 在两个 `vector<unique_ptr<Command>>` 之间转移所有权，新操作会清空已分叉的 Redo 历史。
+- 新增 `ModifyParameterCommand`：构造时记录旧值并通过 `FeatureCatalog` 拒绝未知参数和越界值；execute/redo 写入新值，undo 恢复旧值。
+- `ModelDocument` 新增 `removeFeature(id)`：从文档移除对象并返回 `unique_ptr`，为创建/删除命令的可逆所有权流转提供基础。
+- 新增 `CreateFeatureCommand`：execute 把 Feature 交给 Document，undo 取回，redo 再交回；同一个堆对象全程不重建、不双重拥有。
+- `ModelingService` 已统一接入命令历史，菜单、属性面板和 AI 入口创建/修改的操作都会进入同一套 Undo/Redo 栈。
+- Qt 新增“编辑→撤销/重做”和 Ctrl+Z/Ctrl+Y；历史变化后统一刷新模型树、属性面板和三维视图，撤销最后一个创建时会正确清空场景。
+
+### 教学重点与决策
+- 双栈用两个盒子理解：Undo 栈保存“已经做过、可以反悔”的命令，Redo 栈保存“已经反悔、可以重做”的命令；命令对象本身在两栈间移动。
+- 使用 `vector` 实现栈行为，而非 `std::stack`：当前 push/back/pop_back 都是摊还 O(1)，同时保留未来遍历历史、限制 100 步和删除最旧记录的扩展能力。
+- 修改命令保存 `oldValue_` 给 undo，保存 `newValue_` 给 execute/redo；创建命令则让 Feature 的 `unique_ptr` 在 Command 与 Document 之间移动。
+- 创建操作进入历史后，撤销一次参数修改仍可继续撤销更早的创建；测试曾按旧假设期待 Undo 栈为空，已据此修正断言。
+
+### 验证
+- Release 全量构建成功，新增生产文件和 Qt `.ui` 均实际参加编译。
+- GoogleTest：**68/68 全部通过**，覆盖双栈、历史分叉、空命令、非法参数、Document 所有权取回、创建/修改连续 Undo/Redo。
+- GUI 启动冒烟测试通过；进程稳定运行 3 秒后由测试脚本正常结束。
+
+### 下一步
+- 用户先回头按顺序学习：`Command` → `CommandManager` → `ModifyParameterCommand` → `removeFeature` → `CreateFeatureCommand` → `ModelingService` → Qt 槽。
+- 人工 GUI 验收：创建 Box、修改长度、连续 Ctrl+Z 两次、Ctrl+Y 两次，观察树/属性/3D 同步变化。
+- 验收后实现 `DeleteFeatureCommand`；再进入 Feature 依赖图，避免删除被下游引用的特征。
+
+---
+
 ## 2026-09-09 Document/Service 重构 + DeepSeek AI 建模助手（54/54）
 
 ### 已完成

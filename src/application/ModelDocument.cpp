@@ -38,6 +38,32 @@ domain::Feature& ModelDocument::addFeature(std::unique_ptr<domain::Feature> feat
     return *features_.back();
 }
 
+std::unique_ptr<domain::Feature> ModelDocument::removeFeature(
+    std::string_view id)
+{
+    // 在 vector 中寻找 ID 对应的 Feature。
+    const auto it = std::find_if(
+        features_.begin(),
+        features_.end(),
+        [id](const auto& feature) {
+            return feature->id() == id;
+        });
+
+    // 找不到时返回空 unique_ptr，文档保持不变。
+    if (it == features_.end()) {
+        return nullptr;
+    }
+
+    // 先把 Feature 所有权从 vector 元素转移到局部变量。
+    auto removedFeature = std::move(*it);
+
+    // move 以后，vector 中留下了一个空 unique_ptr，需要删除这个位置。
+    features_.erase(it);
+
+    // 把所有权交给调用方，Document 不再拥有这个 Feature。
+    return removedFeature;
+}
+
 // 可修改查找版本：应用服务需要通过返回指针修改参数。
 // 没找到时返回 nullptr，让调用方显式处理“对象不存在”，而不是抛出容器异常。
 domain::Feature* ModelDocument::findFeature(std::string_view id)

@@ -32,6 +32,9 @@ public:
 
     // 调用后所有权从调用方转移到 Document；返回引用便于选中新建对象。
     domain::Feature& addFeature(std::unique_ptr<domain::Feature> feature);
+    // 按稳定 ID 从文档移除 Feature，并把所有权交给调用方。
+    // 找不到时返回空 unique_ptr。
+    std::unique_ptr<domain::Feature> removeFeature(std::string_view id);
 
     domain::Feature* findFeature(std::string_view id);
     const domain::Feature* findFeature(std::string_view id) const;

@@ -128,6 +128,28 @@ void MainWindow::on_actionNewSphere_triggered()
     createFeatureFromDialog(QStringLiteral("Sphere"));
 }
 
+void MainWindow::on_actionUndo_triggered()
+{
+    if (!modelingService_.canUndo()) {
+        statusBar()->showMessage(QStringLiteral("没有可以撤销的操作"));
+        return;
+    }
+
+    modelingService_.undo();
+    refreshAfterHistoryChange();
+}
+
+void MainWindow::on_actionRedo_triggered()
+{
+    if (!modelingService_.canRedo()) {
+        statusBar()->showMessage(QStringLiteral("没有可以重做的操作"));
+        return;
+    }
+
+    modelingService_.redo();
+    refreshAfterHistoryChange();
+}
+
 // ============================================================
 // createFeatureFromDialog：弹对话框 → 造特征 → 追加进集合并选中
 // ============================================================
@@ -343,6 +365,33 @@ void MainWindow::refreshViewport()
             .arg(validShapes.size())
             .arg(QString::fromStdString(document_.findFeature(selectedFeatureId_)->name()),
                  QString::fromStdString(selectedFeatureId_)));
+}
+
+// ============================================================
+// refreshAfterHistoryChange：Undo/Redo 后同步模型树、属性面板和三维视图
+// ------------------------------------------------------------
+// 撤销“创建”会让当前选中的 Feature 从 Document 消失，因此必须先修正选择：
+// 优先选中文档末尾仍存在的 Feature；若文档已空，则清空选择和 3D 场景。
+// ============================================================
+void MainWindow::refreshAfterHistoryChange()
+{
+    if (!document_.findFeature(selectedFeatureId_)) {
+        const auto& features = document_.features();
+        selectedFeatureId_ = features.empty() ? std::string() : features.back()->id();
+    }
+
+    rebuildFeatureTree();
+    rebuildParamPanel();
+
+    if (document_.features().empty()) {
+        if (viewport_) {
+            viewport_->showShapes({}, -1);
+        }
+        statusBar()->showMessage(QStringLiteral("文档为空"));
+        return;
+    }
+
+    refreshViewport();
 }
 
 void MainWindow::setupAssistantDock()

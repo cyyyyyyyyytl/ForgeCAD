@@ -58,3 +58,37 @@ TEST(ModelDocumentTest, RejectsNullAndDuplicateFeatures)
         document.addFeature(FeatureFactory::create("Sphere", "Sphere001", {30.0})),
         std::invalid_argument);
 }
+
+// removeFeature 不销毁对象，而是把 unique_ptr 所有权从 Document 交还给调用方。
+TEST(ModelDocumentTest, RemovesFeatureAndReturnsItsOwnership)
+{
+    ModelDocument document;
+    auto& added = document.addFeature(
+        FeatureFactory::create("Box", "Box001", {10.0, 20.0, 30.0}));
+    const auto* originalAddress = &added;
+
+    // 移除后文档不再包含 Box001，但返回的 unique_ptr 仍拥有原来的堆对象。
+    auto removed = document.removeFeature("Box001");
+    ASSERT_NE(removed, nullptr);
+    EXPECT_EQ(removed.get(), originalAddress);
+    EXPECT_EQ(document.findFeature("Box001"), nullptr);
+    EXPECT_TRUE(document.features().empty());
+
+    // 把所有权交还给文档后，仍是同一个对象；这正是 Redo 需要的能力。
+    auto& restored = document.addFeature(std::move(removed));
+    EXPECT_EQ(&restored, originalAddress);
+    EXPECT_EQ(document.findFeature("Box001"), originalAddress);
+}
+
+TEST(ModelDocumentTest, RemovingMissingFeatureLeavesDocumentUnchanged)
+{
+    ModelDocument document;
+    document.addFeature(
+        FeatureFactory::create("Sphere", "Sphere001", {20.0}));
+
+    // 未命中的删除返回空指针，也不能误删其他 Feature。
+    auto removed = document.removeFeature("missing");
+    EXPECT_EQ(removed, nullptr);
+    EXPECT_EQ(document.features().size(), 1u);
+    EXPECT_NE(document.findFeature("Sphere001"), nullptr);
+}
