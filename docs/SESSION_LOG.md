@@ -32,6 +32,7 @@
 - GUI 启动冒烟测试通过；进程稳定运行 3 秒后由测试脚本正常结束。
 
 ### 下一步
+- 已整理 `docs/undo-redo-implementation-study.md`，供用户稍后按三轮顺序复习本次真实实现。
 - 用户先回头按顺序学习：`Command` → `CommandManager` → `ModifyParameterCommand` → `removeFeature` → `CreateFeatureCommand` → `ModelingService` → Qt 槽。
 - 人工 GUI 验收：创建 Box、修改长度、连续 Ctrl+Z 两次、Ctrl+Y 两次，观察树/属性/3D 同步变化。
 - 验收后实现 `DeleteFeatureCommand`；再进入 Feature 依赖图，避免删除被下游引用的特征。

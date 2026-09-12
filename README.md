@@ -44,6 +44,7 @@ ctest --test-dir build -C Release
 - `benchmarks/` 性能基准
 - `docs/` 架构/设计/性能文档
 - `docs/SESSION_LOG.md` 每日学习/工作日志（教学交接用，最新条目在顶部）
+- `docs/undo-redo-implementation-study.md` Undo/Redo、命令模式与所有权流转学习笔记
 
 ## AI 建模助手（DeepSeek）
 
