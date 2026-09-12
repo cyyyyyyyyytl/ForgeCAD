@@ -305,6 +305,11 @@ void MainWindow::rebuildParamPanel()
     for (const auto& p : params) {
         auto* spin = new QDoubleSpinBox(ui->paramPanelContainer);
         spin->setDecimals(1);
+        // 键盘输入“50”时，默认会先为字符“5”发出一次 valueChanged，
+        // 再为最终值“50”发出第二次，导致 Undo 历史记录两个中间状态。
+        // 关闭 keyboardTracking 后，键盘编辑只在回车或失去焦点时提交最终值；
+        // 点击上下箭头仍会正常发出 valueChanged，并保持即时建模反馈。
+        spin->setKeyboardTracking(false);
         if (const auto* descriptor = forge::domain::FeatureCatalog::findParameter(
                 feature->name(), p.name())) {
             spin->setRange(descriptor->minimum, descriptor->maximum);
@@ -312,8 +317,8 @@ void MainWindow::rebuildParamPanel()
         spin->setValue(p.asDouble());         // 初值 = 模型当前值
         form->addRow(paramLabel(p.name()), spin);
 
-        // ★ 动态控件没有固定的 on_ 名字 → 手动 connect（lambda 捕获参数名）
-        //   值一变：写进"当时选中"的特征 → 立刻重建显示
+        // ★ 动态控件没有固定的 on_ 名字 → 手动 connect（lambda 捕获参数名）。
+        //   箭头调整会立即提交；键盘输入则在编辑完成后只提交最终数值。
         connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
                 [this, featureId, paramName = p.name()](double v) {
                     try {
