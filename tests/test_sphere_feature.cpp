@@ -17,7 +17,7 @@ using namespace forge::domain;
 TEST(SphereFeatureTest, ConstructorSetsIdAndName) {
     SphereFeature sph("Sph001", 20.0);   // 半径 20
     EXPECT_EQ(sph.id(), "Sph001");
-    EXPECT_EQ(sph.name(), "Sphere");
+    EXPECT_EQ(sph.type(), "Sphere");
 }
 
 // ② 参数列表测试：恰好 1 个参数，名字 radius

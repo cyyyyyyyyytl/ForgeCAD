@@ -50,9 +50,3 @@ TEST(ShapeFactoryTest, MakeSphereInvalidReturnsNull) {
     auto sph = forge::geometry::ShapeFactory::makeSphere(0);
     EXPECT_TRUE(sph.IsNull());
 }
-
-int main(int argc, char** argv) {
-    // 先让 GoogleTest 解析 --gtest_filter 等命令行参数，再统一执行已注册用例。
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

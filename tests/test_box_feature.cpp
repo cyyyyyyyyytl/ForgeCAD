@@ -21,7 +21,7 @@ using namespace forge::domain;      // 省得每个类型前都写 forge::domain
 TEST(BoxFeatureTest, ConstructorSetsIdAndName) {
     BoxFeature box("Box001", 100, 50, 30);   // 建一个 100x50x30 的盒子
     EXPECT_EQ(box.id(), "Box001");           // id 必须是构造时给的 "Box001"
-    EXPECT_EQ(box.name(), "Box");            // name 必须是 "Box"（爸爸 Feature 里写死的）
+    EXPECT_EQ(box.type(), "Box");
 }
 
 // ------------------------------------------------------------

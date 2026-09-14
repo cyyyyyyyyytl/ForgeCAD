@@ -8,7 +8,6 @@
 
 namespace forge::application {
 class ModelDocument;
-class ModelingService;
 }
 
 namespace forge::assistant {
@@ -16,6 +15,11 @@ namespace forge::assistant {
 // ============================================================
 // AgentController：最小 C++ Agent 运行时
 // ------------------------------------------------------------
+// AI 层分成三层：
+//   DeepSeekClient  <-> HTTP/JSON 网络通信
+//   AgentController <-> 对话历史与“模型-工具-模型”循环
+//   ToolRegistry    <-> 工具白名单与 ModelDocument 调用
+//
 // Agent 并不是模型在本机运行函数，而是宿主程序维护下面的循环：
 //   messages + tools -> 请求模型 -> 收到 tool_calls -> 本地执行
 //   -> 追加 role=tool 的结果 -> 再请求模型 -> 收到最终文本
@@ -25,9 +29,8 @@ class AgentController : public QObject {
     Q_OBJECT
 
 public:
-    // 注入 Document 和 ModelingService，让工具能读写当前窗口对应的模型。
+    // 注入 Document，让工具读写当前窗口对应的模型。
     AgentController(application::ModelDocument& document,
-                    application::ModelingService& modelingService,
                     QObject* parent = nullptr);
 
     void submit(const QString& userMessage); // 接收一条用户自然语言并启动 Agent 循环。
@@ -50,7 +53,7 @@ private:
 
     static constexpr int MaxAgentSteps = 6; // 单次用户请求的最大工具轮数，防止死循环。
     DeepSeekClient client_;                // 只负责异步 HTTP，不理解 CAD 工具。
-    ToolRegistry tools_;                   // 白名单工具定义和本地执行入口。
+    ToolRegistry tools_;                   // AI 能进入 ModelDocument 的唯一受控入口。
     QJsonArray messages_;                  // 完整对话历史：system/user/assistant/tool。
     int currentStep_ = 0;                  // 当前请求已经完成的工具轮数。
     bool busy_ = false;                    // true 表示请求链尚未结束。

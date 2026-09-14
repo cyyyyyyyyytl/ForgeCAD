@@ -1,16 +1,14 @@
 #include <gtest/gtest.h>
 
 #include "application/ModelDocument.h"
-#include "application/ModelingService.h"
 #include "assistant/ToolRegistry.h"
 #include "domain/Feature.h"
 
 using forge::application::ModelDocument;
-using forge::application::ModelingService;
 using forge::assistant::ToolRegistry;
 
 // ============================================================
-// ToolRegistryTest：验证 LLM JSON 到 C++ ModelingService 的安全边界
+// ToolRegistryTest：验证 LLM JSON 到 ModelDocument 的安全边界
 // ------------------------------------------------------------
 // 测试完全不访问 DeepSeek 网络；直接构造模型可能返回的 QJsonObject，
 // 因此结果稳定、无费用，也能精确定位是协议层还是网络层出错。
@@ -20,8 +18,7 @@ using forge::assistant::ToolRegistry;
 TEST(ToolRegistryTest, ExposesFourModelingTools)
 {
     ModelDocument document;
-    ModelingService service(document);
-    ToolRegistry registry(document, service);
+    ToolRegistry registry(document);
 
     // 同时抽查第一个工具名，避免数组虽然为 4 但内容登记错误。
     const QJsonArray schemas = registry.schemas();
@@ -34,8 +31,7 @@ TEST(ToolRegistryTest, ExposesFourModelingTools)
 TEST(ToolRegistryTest, CreatesAndListsFeatureFromJsonArguments)
 {
     ModelDocument document;
-    ModelingService service(document);
-    ToolRegistry registry(document, service);
+    ToolRegistry registry(document);
 
     // JSON 结构与 DeepSeek function.arguments 解析后的对象一致。
     const QJsonObject created = registry.execute("create_feature", {
@@ -63,9 +59,8 @@ TEST(ToolRegistryTest, CreatesAndListsFeatureFromJsonArguments)
 TEST(ToolRegistryTest, ModifiesFeatureAndRejectsInvalidCalls)
 {
     ModelDocument document;
-    ModelingService service(document);
-    ToolRegistry registry(document, service);
-    service.createFeature("Sphere", {{"radius", 20.0}});
+    ToolRegistry registry(document);
+    document.createFeature("Sphere", {{"radius", 20.0}});
 
     // 合法请求把 Sphere001.radius 从 20 修改为 35。
     const QJsonObject modified = registry.execute("set_parameter", {

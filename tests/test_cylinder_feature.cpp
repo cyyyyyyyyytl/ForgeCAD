@@ -18,7 +18,7 @@ using namespace forge::domain;
 TEST(CylinderFeatureTest, ConstructorSetsIdAndName) {
     CylinderFeature cyl("Cyl001", 20.0, 60.0);   // 半径 20，高度 60
     EXPECT_EQ(cyl.id(), "Cyl001");
-    EXPECT_EQ(cyl.name(), "Cylinder");
+    EXPECT_EQ(cyl.type(), "Cylinder");
 }
 
 // ② 参数列表测试：恰好 2 个参数，名字 radius/height，顺序与值正确

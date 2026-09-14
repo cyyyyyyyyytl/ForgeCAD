@@ -1,49 +1,42 @@
-//
-// Created by 15389 on 2026/8/27.
-//
+#pragma once
 
-#ifndef FORGECAD_PARAMETER_H
-#define FORGECAD_PARAMETER_H
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <variant>
 
-#include <string>       // std::string
-#include <variant>      // std::variant / std::get_if
-#include <stdexcept>    // std::runtime_error
-#include <utility>      // std::move
+namespace forge::domain {
 
-namespace forge::domain {   // 门牌号：forge 项目 / domain 领域层
-
-// 参数值：一个值可能是 double / int / bool / string 之一
+// ParameterValue 表示参数未来可能具有的几种类型。
+// 当前 Box/Cylinder/Sphere 只用 double，保留 variant 是为了以后增加开关、
+// 整数段数、枚举名称等参数时不用推翻 Feature 接口。
 using ParameterValue = std::variant<double, int, bool, std::string>;
 
+// Parameter 是“某一个 Feature 实例的当前参数”，例如 Box001.length=100。
+// 它不同于 ParameterDescriptor：后者描述所有 Box 的 length 允许输入什么。
 class Parameter {
 public:
-    // 构造函数：名字和值。std::move = 搬进来不拷贝
     Parameter(std::string name, ParameterValue value)
         : name_(std::move(name)), value_(std::move(value)) {}
 
-    // 返回名字（const 引用：只读，不拷贝）
     const std::string& name() const { return name_; }
-
-    // 改值
     void setValue(ParameterValue value) { value_ = std::move(value); }
 
-    // 取数值（double 或 int 都行）；类型不对抛异常
-    double asDouble() const {
-        if (auto* d = std::get_if<double>(&value_)) {   // 如果是 double
-            return *d;
+    // 数值建模代码统一取 double；int 可以安全提升，其他类型明确报错。
+    double asDouble() const
+    {
+        if (const auto* value = std::get_if<double>(&value_)) {
+            return *value;
         }
-        if (auto* i = std::get_if<int>(&value_)) {      // 如果是 int
-            return static_cast<double>(*i);             // 转成 double 返回
+        if (const auto* value = std::get_if<int>(&value_)) {
+            return static_cast<double>(*value);
         }
-        // 都不是 → 抛异常（出错了，告诉调用方原因）
         throw std::runtime_error("Parameter '" + name_ + "' 不是数值类型");
     }
 
 private:
-    std::string name_;        // 参数名，如 "length"
-    ParameterValue value_;    // 参数值
+    std::string name_;
+    ParameterValue value_;
 };
 
 } // namespace forge::domain
-
-#endif //FORGECAD_PARAMETER_H

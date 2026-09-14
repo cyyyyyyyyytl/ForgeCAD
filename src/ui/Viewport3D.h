@@ -5,7 +5,7 @@
 //   它自己不管怎么建模，只负责：
 //     ① 创建 OCCT 的 3D 场景（Viewer + View + Context）
 //     ② 提供一个 showShapes() 接口——别人把多个 TopoDS_Shape 丢进来，它们一起显示
-//     ③ 处理鼠标：左键旋转、滚轮缩放（W4 再完善平移/选择）
+//     ③ 处理鼠标：左键选择、中键旋转、Shift+中键平移、滚轮缩放
 // 为什么这么设计：UI 和几何解耦——
 //   Viewport3D 只认识"形状(Shape)"，不认识"Box/圆柱"这些业务概念。
 //   （对应需求文档："GUI 与业务逻辑解耦"）
@@ -15,6 +15,7 @@
 // ---- Qt 部分 ----
 #include <QWidget>                    // 基类：Qt 的"控件"（能放进窗口的东西）
 #include <QTimer>                     // 定时器：持续刷新画面（OCCT 不会自己重绘）
+#include <QPoint>
 #include <vector>                     // std::vector：一次接收并显示多个形状
 
 // ---- OCCT 部分 ----
@@ -40,8 +41,15 @@ public:
     // 注意：这里接收的是“形状列表”，Viewport3D 不需要认识 Box/Cylinder 等业务类型。
     void showShapes(const std::vector<TopoDS_Shape>& shapes, int selectedIndex);
 
+    // 只更新选择表现，不重新生成或重新显示几何。
+    void setSelectedIndex(int selectedIndex);
+
     // 视角：让模型"恰好装满"屏幕（W4 完善）
     void fitAll();
+
+signals:
+    // 用户在 3D 视口中点击对象；-1 表示点击空白并清除选择。
+    void shapeSelected(int index);
 
 protected:
     // 以下都是 QWidget 的"事件回调"，重写它们让 OCCT 视图跟随窗口变化
@@ -50,12 +58,18 @@ protected:
     void showEvent(QShowEvent*) override;      // 窗口首次显示时被调用
     void mousePressEvent(QMouseEvent*) override;   // 鼠标按下
     void mouseMoveEvent(QMouseEvent*) override;    // 鼠标移动
+    void mouseReleaseEvent(QMouseEvent*) override; // 鼠标释放/完成点击选择
+    void leaveEvent(QEvent*) override;             // 鼠标离开时清除预选高亮
     void wheelEvent(QWheelEvent*) override;        // 滚轮
 
 private:
     void initViewer();    // 初始化 OCCT 3D 场景（窗口显示后调一次）
     bool inited_ = false; // 防止 initViewer 被多次调用
     QTimer refreshTimer_; // 持续刷新：OCCT 画面会被覆盖，必须定时重绘
+    QPoint pressPosition_;
+    QPoint lastMousePosition_;
+    bool rotating_ = false;
+    bool panning_ = false;
 
     // OCCT 的"句柄"（智能指针）——对象生命周期自动管理
     occ::handle<V3d_Viewer>             viewer_;    // 场景容器

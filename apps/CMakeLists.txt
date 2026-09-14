@@ -9,6 +9,9 @@ add_executable(forgecad WIN32
     forgecad/main.cpp
     ../src/ui/mainwindow.cpp
     ../src/ui/mainwindow.ui
+    ../src/ui/assistantdialog.cpp
+    ../src/ui/assistantdialog.h
+    ../src/ui/assistantdialog.ui
 )
 # 主程序只直接依赖 forgecore 和 Qt Widgets；其余依赖由 forgecore 传递。
 target_link_libraries(forgecad PRIVATE
@@ -50,7 +53,7 @@ if(WIN32)
     # 复制 OCCT/spdlog 等 vcpkg 运行库，避免启动时报依赖 DLL 缺失。
     add_custom_command(TARGET forgecad POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${VCPKG_INSTALLED_DIR}/x64-windows/bin"
+            "${VCPKG_INSTALLED_DIR}/x64-windows/$<$<CONFIG:Debug>:debug/>bin"
             "$<TARGET_FILE_DIR:forgecad>"
         COMMENT "copy vcpkg DLL"
     )

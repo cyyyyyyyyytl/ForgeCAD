@@ -26,6 +26,18 @@
 
 // ---- OCCT：显示物体 ----
 #include <AIS_Shape.hxx>                  // 把 TopoDS_Shape 包装成"可显示物体"
+#include <AIS_DisplayMode.hxx>
+#include <Aspect_GradientFillMethod.hxx>
+#include <Aspect_TypeOfTriedronPosition.hxx>
+#include <Graphic3d_Camera.hxx>
+#include <Graphic3d_MaterialAspect.hxx>
+#include <Graphic3d_NameOfMaterial.hxx>
+#include <Prs3d_Drawer.hxx>
+#include <Prs3d_LineAspect.hxx>
+#include <Prs3d_TypeOfHighlight.hxx>
+#include <Quantity_Color.hxx>
+#include <V3d_TypeOfOrientation.hxx>
+#include <V3d_TypeOfVisualization.hxx>
 
 #include <spdlog/spdlog.h>                // 日志（记录关键步骤，方便排查）
 #include <cstdio>                         // fprintf：写诊断日志到文件（一定能看到）
@@ -88,11 +100,24 @@ void Viewport3D::initViewer() {
 
         // ③ 创建 View（画布 + 相机）
         view_ = new V3d_View(viewer_);
-        view_->SetBackgroundColor(Quantity_NOC_GRAY30);
+        view_->SetBgGradientColors(
+            Quantity_Color(0.18, 0.21, 0.25, Quantity_TOC_RGB),
+            Quantity_Color(0.055, 0.065, 0.085, Quantity_TOC_RGB),
+            Aspect_GradientFillMethod_Vertical,
+            false);
+        view_->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+        view_->SetProj(V3d_TypeOfOrientation_Zup_AxoRight);
+        view_->ChangeRenderingParams().NbMsaaSamples = 4;
         diagLog("[3] view created");
 
         // ④ 创建 Context（场景管理器）
         context_ = new AIS_InteractiveContext(viewer_);
+        context_->SetDisplayMode(AIS_Shaded, false);
+        context_->SetPixelTolerance(4);
+        context_->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetColor(
+            Quantity_Color(0.25, 0.78, 1.0, Quantity_TOC_RGB));
+        context_->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetColor(
+            Quantity_Color(1.0, 0.58, 0.12, Quantity_TOC_RGB));
         diagLog("[4] context created");
 
         // 关键：创建"中立窗口"并告诉它当前控件尺寸。
@@ -105,6 +130,11 @@ void Viewport3D::initViewer() {
         aWin->SetNativeHandle(reinterpret_cast<Aspect_Drawable>(hwnd));
         aWin->SetSize(width(), height());          // 窗口大小 = 控件大小
         view_->SetWindow(aWin);
+        view_->TriedronDisplay(
+            Aspect_TOTP_LEFT_LOWER,
+            Quantity_NOC_WHITE,
+            0.075,
+            V3d_ZBUFFER);
         diagLog("[5] SetWindow(NeutralWindow+handle) done, hwnd="
                 + std::to_string(reinterpret_cast<long long>(hwnd)));
         view_->MustBeResized();
@@ -147,22 +177,40 @@ void Viewport3D::showShapes(const std::vector<TopoDS_Shape>& shapes, int selecte
         }
 
         occ::handle<AIS_Shape> displayed = new AIS_Shape(shape);
+        displayed->SetMaterial(
+            Graphic3d_MaterialAspect(Graphic3d_NameOfMaterial_Satin));
+        displayed->SetColor(
+            Quantity_Color(0.72, 0.78, 0.86, Quantity_TOC_RGB));
+        displayed->Attributes()->SetFaceBoundaryDraw(true);
+        displayed->Attributes()->SetupOwnFaceBoundaryAspect();
+        displayed->Attributes()->FaceBoundaryAspect()->SetColor(
+            Quantity_Color(0.12, 0.15, 0.19, Quantity_TOC_RGB));
+        displayed->Attributes()->FaceBoundaryAspect()->SetWidth(1.25);
+
         // OCCT 8.0: Display(对象, 显示模式, 选择模式, 是否刷新视图)
         context_->Display(displayed, AIS_Shaded, 0, false);
         displayedShapes_.push_back(displayed);
     }
 
     // ③ selectedIndex 是“有效形状列表”的下标。
-    // SetSelected 会使用 OCCT 内置的选中样式把当前对象高亮。
-    if (selectedIndex >= 0
-        && selectedIndex < static_cast<int>(displayedShapes_.size())) {
-        context_->SetSelected(displayedShapes_[selectedIndex], false);
-    }
+    setSelectedIndex(selectedIndex);
 
     diagLog("showShapes: displayed " + std::to_string(displayedShapes_.size()) + " shapes");
     view_->FitAll();
     view_->Redraw();
     diagLog("FitAll + Redraw done");
+}
+
+void Viewport3D::setSelectedIndex(int selectedIndex)
+{
+    if (!context_) return;
+
+    context_->ClearSelected(false);
+    if (selectedIndex >= 0
+        && selectedIndex < static_cast<int>(displayedShapes_.size())) {
+        context_->SetSelected(displayedShapes_[selectedIndex], false);
+    }
+    if (view_) view_->Redraw();
 }
 
 // 调整视角到整个模型
@@ -195,19 +243,80 @@ void Viewport3D::resizeEvent(QResizeEvent*) {
     }
 }
 
-// 鼠标按下：开始旋转
+// 左键选择；中键拖动旋转；Shift+中键拖动平移。
 void Viewport3D::mousePressEvent(QMouseEvent* e) {
-    if (e->button() == Qt::LeftButton) {
-        view_->StartRotation(e->x(), e->y());
+    pressPosition_ = e->position().toPoint();
+    lastMousePosition_ = pressPosition_;
+
+    if (e->button() == Qt::MiddleButton && view_) {
+        panning_ = e->modifiers().testFlag(Qt::ShiftModifier);
+        rotating_ = !panning_;
+        if (rotating_) view_->StartRotation(e->x(), e->y());
+        e->accept();
+    } else if (e->button() == Qt::LeftButton) {
+        e->accept();
     }
 }
 
-// 鼠标移动：执行旋转
 void Viewport3D::mouseMoveEvent(QMouseEvent* e) {
-    if (e->buttons() & Qt::LeftButton) {
+    if (rotating_ && (e->buttons() & Qt::MiddleButton) && view_) {
         view_->Rotation(e->x(), e->y());
         view_->Redraw();
+        lastMousePosition_ = e->position().toPoint();
+        return;
     }
+
+    if (panning_ && (e->buttons() & Qt::MiddleButton) && view_) {
+        const QPoint current = e->position().toPoint();
+        const QPoint delta = current - lastMousePosition_;
+        view_->Pan(delta.x(), -delta.y());
+        view_->Redraw();
+        lastMousePosition_ = current;
+        return;
+    }
+
+    if (e->buttons() == Qt::NoButton && context_ && view_) {
+        context_->MoveTo(e->x(), e->y(), view_, true);
+    }
+}
+
+void Viewport3D::mouseReleaseEvent(QMouseEvent* e)
+{
+    if (e->button() == Qt::MiddleButton) {
+        rotating_ = false;
+        panning_ = false;
+        e->accept();
+        return;
+    }
+
+    if (e->button() != Qt::LeftButton || !context_ || !view_) return;
+    if ((e->position().toPoint() - pressPosition_).manhattanLength() > 4) return;
+
+    context_->MoveTo(e->x(), e->y(), view_, true);
+    if (!context_->HasDetected()) {
+        context_->ClearSelected(false);
+        view_->Redraw();
+        emit shapeSelected(-1);
+        return;
+    }
+
+    const occ::handle<AIS_InteractiveObject> detected = context_->DetectedInteractive();
+    int selectedIndex = -1;
+    for (int i = 0; i < static_cast<int>(displayedShapes_.size()); ++i) {
+        if (displayedShapes_[i].get() == detected.get()) {
+            selectedIndex = i;
+            break;
+        }
+    }
+
+    context_->SelectDetected(AIS_SelectionScheme_Replace);
+    view_->Redraw();
+    emit shapeSelected(selectedIndex);
+}
+
+void Viewport3D::leaveEvent(QEvent*)
+{
+    if (context_) context_->ClearDetected(true);
 }
 
 // 滚轮：以【鼠标光标位置】为中心缩放（专业 CAD 的手感）

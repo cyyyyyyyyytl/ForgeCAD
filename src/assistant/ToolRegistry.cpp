@@ -1,9 +1,8 @@
 #include "assistant/ToolRegistry.h"
 
 #include "application/ModelDocument.h"
-#include "application/ModelingService.h"
 #include "domain/Feature.h"
-#include "domain/FeatureCatalog.h"
+#include "domain/FeatureRegistry.h"
 
 #include <stdexcept>
 
@@ -55,26 +54,23 @@ QString requireString(const QJsonObject& object, const QString& key)
 
 } // namespace
 
-ToolRegistry::ToolRegistry(application::ModelDocument& document,
-                           application::ModelingService& modelingService)
+ToolRegistry::ToolRegistry(application::ModelDocument& document)
     : document_(document)
-    , modelingService_(modelingService)
 {
-    // Registry 不拥有这两个对象；MainWindow 保证 Document 和 Service
-    // 生命周期覆盖 AgentController 及其 ToolRegistry。
+    // Registry 不拥有 Document；MainWindow 保证它的生命周期更长。
 }
 
 // ============================================================
 // schemas：把 ForgeCAD 当前允许的能力公开给大模型
 // ------------------------------------------------------------
 // Schema 只是告诉模型“可以怎样申请调用”；它不是安全校验的替代品。
-// 模型返回后仍会经过 requireString、数值类型检查和 ModelingService 校验。
+// 模型返回后仍会经过 requireString、数值类型检查和 Document 校验。
 // ============================================================
 QJsonArray ToolRegistry::schemas() const
 {
-    // Feature 类型枚举从 Catalog 自动生成；以后新增 Cone 时不必手改 AI 类型列表。
+    // Feature 类型枚举从 Registry 自动生成；以后新增 Cone 时不必手改 AI 类型列表。
     QJsonArray featureTypes;
-    for (const auto& descriptor : domain::FeatureCatalog::all()) {
+    for (const auto& descriptor : domain::FeatureRegistry::all()) {
         featureTypes.append(QString::fromStdString(descriptor.type));
     }
 
@@ -156,7 +152,7 @@ QJsonObject ToolRegistry::featureToJson(const domain::Feature& feature) const
     // 统一返回结构能让 list/get/create/set 的结果保持一致。
     return {
         {"feature_id", QString::fromStdString(feature.id())},
-        {"type", QString::fromStdString(feature.name())},
+        {"type", QString::fromStdString(feature.type())},
         {"parameters", parameters},
     };
 }
@@ -193,7 +189,7 @@ QJsonObject ToolRegistry::getFeature(const QJsonObject& arguments) const
 // 修改工具：根据类型和具名参数创建新 Feature。
 QJsonObject ToolRegistry::createFeature(const QJsonObject& arguments)
 {
-    // type 决定 FeatureCatalog 中使用哪套参数 Schema。
+    // type 决定 FeatureRegistry 中使用哪套参数说明。
     const QString type = requireString(arguments, "type");
 
     // parameters 必须是对象，数组或纯文本无法表达“参数名 -> 数值”的映射。
@@ -213,8 +209,8 @@ QJsonObject ToolRegistry::createFeature(const QJsonObject& arguments)
         parameters.emplace(it.key().toStdString(), it.value().toDouble());
     }
 
-    // Registry 不直接调用 FeatureFactory，确保 UI 和 AI 都服从同一建模用例规则。
-    domain::Feature& feature = modelingService_.createFeature(type.toStdString(), parameters);
+    // 通过 Document 创建，确保 UI 和 AI 共用同一套校验和历史记录。
+    domain::Feature& feature = document_.createFeature(type.toStdString(), parameters);
     // 返回完整新对象而不只返回“成功”，方便模型准确告诉用户生成了什么。
     QJsonObject result = featureToJson(feature);
     result.insert("success", true);
@@ -233,10 +229,10 @@ QJsonObject ToolRegistry::setParameter(const QJsonObject& arguments)
         throw std::invalid_argument("value 必须是数值");
     }
 
-    // 真正的范围检查、旧值保存和失败回滚全部由 ModelingService 负责。
-    modelingService_.setParameter(featureId.toStdString(),
-                                  parameterName.toStdString(),
-                                  rawValue.toDouble());
+    // 真正的范围检查和历史记录全部由 Document 负责。
+    document_.setParameter(featureId.toStdString(),
+                           parameterName.toStdString(),
+                           rawValue.toDouble());
     // 修改成功后重新从 Document 读取，返回的是最终生效值而不是模型请求值。
     const domain::Feature* feature = document_.findFeature(featureId.toStdString());
     QJsonObject result = featureToJson(*feature);

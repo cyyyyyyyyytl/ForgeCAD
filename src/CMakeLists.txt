@@ -7,26 +7,20 @@ set(CMAKE_AUTOMOC ON)
 add_library(forgecore
     # core：版本等最底层公共能力。
     core/Version.cpp
-    # application：UI/AI 共用的建模用例和模型所有权。
-    application/CommandManager.cpp
-    application/CreateFeatureCommand.cpp
-    application/ModifyParameterCommand.cpp
+    # application：UI/AI 共用的模型入口、所有权和历史记录。
     application/ModelDocument.cpp
-    application/ModelingService.cpp
     # assistant：DeepSeek 网络适配、Agent 循环和工具白名单。
     assistant/AgentController.cpp
     assistant/DeepSeekClient.cpp
     assistant/ToolRegistry.cpp
     # domain/geometry：参数化 Feature 及 OCCT 构造。
     domain/BoxFeature.cpp
-    domain/FeatureCatalog.cpp
+    domain/FeatureRegistry.cpp
     geometry/ShapeFactory.cpp
     # Viewport3D 可被不同窗口复用，因此放进核心库；MainWindow 不放这里。
     ui/Viewport3D.cpp
     domain/CylinderFeature.cpp
-    domain/FeatureFactory.cpp
     domain/SphereFeature.cpp
-
 )
 
 # 包含 src 根，便于 #include<core/...>

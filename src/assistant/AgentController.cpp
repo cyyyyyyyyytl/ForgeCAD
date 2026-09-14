@@ -8,15 +8,13 @@ namespace forge::assistant {
 // ============================================================
 // 构造：装配模型客户端、工具注册表和系统消息
 // ------------------------------------------------------------
-// document/modelingService 由 MainWindow 拥有，Controller 只保存到 ToolRegistry
-// 的引用；client_ 是值成员，不需要手动 delete。
+// document 由 MainWindow 拥有，Controller 只把它交给 ToolRegistry 引用。
 // ============================================================
 AgentController::AgentController(application::ModelDocument& document,
-                                 application::ModelingService& modelingService,
     QObject* parent)
     : QObject(parent)
     , client_()
-    , tools_(document, modelingService)
+    , tools_(document)
 {
     // 系统消息约束模型角色和安全行为：只有工具成功后才能声称已经修改模型。
     messages_.append(QJsonObject{
