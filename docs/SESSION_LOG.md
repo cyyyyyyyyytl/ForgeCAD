@@ -9,6 +9,25 @@
 
 ---
 
+## 2026-09-19 全项目手写 C++ 教学注释完善（45/45）
+
+### 已完成
+- 对 `apps/`、`src/`、`tests/` 中的手写 C++ 进行完整注释审计；跳过 `.ui`、uic/moc 自动生成代码和构建产物。
+- 为 AI 全链路补充逐句中文说明：`AssistantDialog` 输入与信号、`AgentController` 工具循环、`DeepSeekClient` 异步 HTTPS、`ToolRegistry` 白名单与 JSON 校验。
+- 为核心建模链路补充所有权、参数校验、多态、Registry、文档快照式 Undo/Redo 和 OCCT 几何/显示说明。
+- 完善单元测试中的准备步骤、断言目的、正常/错误分支和历史栈预期，使测试可以作为可执行规格书阅读。
+- 保留会话开始前工作区中 `ModelDocument.h/.cpp` 的用户格式修改，没有回退或覆盖用户代码。
+
+### 验证
+- Visual Studio CMake Release 全量构建成功。
+- CTest：**45/45 全部通过**。
+- `git diff --check` 通过；未修改 Qt 自动生成文件。
+
+### 下一步
+- 学习 AI 模块时按 `assistantdialog.cpp` → `mainwindow.cpp` → `AgentController.cpp` → `DeepSeekClient.cpp` → `ToolRegistry.cpp` → `ModelDocument.cpp` 的真实调用顺序逐句阅读。
+
+---
+
 ## 2026-09-12 Command 双栈 + 创建/参数修改 Undo/Redo（68/68）
 
 ### 已完成

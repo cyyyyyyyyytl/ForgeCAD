@@ -10,19 +10,21 @@
 //   · document_ 是唯一真相源，模型树只是它的"展示"（变了就整树重建）
 //   · .ui 只摆空舞台，参数界面由代码按选中特征的 parameters() 动态填充
 // ============================================================
+// 传统头文件保护宏：防止 MainWindow 类在同一翻译单元中重复定义。
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
-#include <QMainWindow>
-#include <string>
-#include <vector>
+#include <QMainWindow> // MainWindow 继承的 Qt 顶层窗口基类。
+#include <string>      // 保存当前选中和视口映射使用的稳定 Feature ID。
+#include <vector>      // 保存“视口显示下标 -> Feature ID”的顺序映射。
 
-#include "application/ModelDocument.h"
+#include "application/ModelDocument.h" // MainWindow 以值成员拥有当前 CAD 文档。
 
 class QStandardItemModel;  // 前向声明：树的"数据模型"（放类外=全局类；指针够用，完整定义在 .cpp）
-class AssistantDialog;
+class AssistantDialog; // 这里只保存指针，完整对话框定义留给 .cpp。
 
 namespace Ui {
+// uic 根据 mainwindow.ui 自动生成这个类；手写头文件只需要知道它的名字。
 class MainWindow;
 }
 
@@ -32,11 +34,12 @@ namespace forge::assistant { class AgentController; }
 
 class MainWindow : public QMainWindow
 {
+    // Q_OBJECT 启用 Qt 元对象系统，使 on_action... 槽可以由名字自动连接。
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget *parent = nullptr);
-    ~MainWindow();
+    explicit MainWindow(QWidget *parent = nullptr); // 创建界面、视口、模型树和 AI 连接。
+    ~MainWindow();                                  // 释放手写 new 的 Ui 包装对象。
 
 private slots:
     // 菜单动作 → Qt 按名字约定自动连接（on_<动作名>_triggered）
@@ -48,16 +51,16 @@ private slots:
     void on_actionDeleteFeature_triggered();// 编辑→删除选中特征（Del）
 
 private:
-    Ui::MainWindow *ui;
-    forge::ui::Viewport3D* viewport_ = nullptr;      // 3D 视图控件
+    Ui::MainWindow *ui; // uic 生成界面的访问入口，例如 ui->modelTree。
+    forge::ui::Viewport3D* viewport_ = nullptr; // 动态嵌入 viewportContainer 的 3D 控件。
 
     // ---- 核心数据：文档是模型的唯一所有者和操作入口 ----
-    forge::application::ModelDocument document_;
-    forge::assistant::AgentController* agentController_ = nullptr;
-    AssistantDialog* assistantDialog_ = nullptr;
-    std::string selectedFeatureId_;
-    std::vector<std::string> viewportFeatureIds_;
-    QStandardItemModel* treeModel_ = nullptr;
+    forge::application::ModelDocument document_; // 唯一拥有 Feature 和 Undo/Redo 历史。
+    forge::assistant::AgentController* agentController_ = nullptr; // AI 工具循环协调器。
+    AssistantDialog* assistantDialog_ = nullptr; // 非模态 AI 对话窗口，重复打开时复用。
+    std::string selectedFeatureId_; // 当前树/属性/视口共同选中的稳定对象 ID。
+    std::vector<std::string> viewportFeatureIds_; // 对应 Viewport3D 中有效 Shape 的顺序。
+    QStandardItemModel* treeModel_ = nullptr; // QTreeView 展示所需的数据模型。
 
     // ---- 私有工具（入口与动作分离：槽只转发，逻辑集中在这里）----
     void createFeatureFromDialog(const QString& type); // 弹对话框 → 造特征 → 追加进集合
@@ -69,4 +72,4 @@ private:
     void setupAssistantDialog();                       // 连接 Designer AI 窗口与 Agent
 };
 
-#endif // MAINWINDOW_H
+#endif // MAINWINDOW_H：头文件保护结束。

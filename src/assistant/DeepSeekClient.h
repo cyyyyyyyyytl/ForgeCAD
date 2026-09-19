@@ -1,9 +1,9 @@
-#pragma once
+#pragma once // 保证头文件在一次编译中只展开一次。
 
-#include <QJsonArray>
-#include <QJsonObject>
-#include <QNetworkAccessManager>
-#include <QObject>
+#include <QJsonArray>             // 保存 messages 和 tools 两个 JSON 数组。
+#include <QJsonObject>            // 信号返回解析完成的 JSON 根对象。
+#include <QNetworkAccessManager>  // Qt 的异步 HTTP 请求管理器。
+#include <QObject>                // QObject 提供父子生命周期和信号槽机制。
 
 namespace forge::assistant {
 
@@ -17,6 +17,7 @@ namespace forge::assistant {
 // 密钥只从进程环境读取，绝不进入源码、日志和 Git。
 // ============================================================
 class DeepSeekClient : public QObject {
+    // Q_OBJECT 启用 moc 生成的元对象代码，使本类可以发出下面两个信号。
     Q_OBJECT
 
 public:

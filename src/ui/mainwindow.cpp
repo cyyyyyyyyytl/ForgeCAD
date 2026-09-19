@@ -7,8 +7,8 @@
 //   · 点树 → selectFeature() 换选中 → 属性面板和 3D 视图跟着切
 //   · 属性面板每行输入框变化 → setParameter → rebuild → showShapes（实时联动）
 // ============================================================
-#include "mainwindow.h"
-#include "ui_mainwindow.h"
+#include "mainwindow.h"    // MainWindow 手写类声明和持有的 ModelDocument。
+#include "ui_mainwindow.h" // uic 根据 mainwindow.ui 自动生成，只使用、不手改。
 
 #include <QVBoxLayout>          // 垂直布局（3D 视图/分组框占满用）
 #include <QFormLayout>          // 表单布局（"标签 + 输入框"一行行排）
@@ -22,14 +22,14 @@
 #include <QTreeView>            // 模型树控件（clicked 信号）
 
 #include "ui/Viewport3D.h"      // 3D 视图控件
-#include "assistantdialog.h"
-#include "assistant/AgentController.h"
-#include "domain/Feature.h"
-#include "domain/FeatureRegistry.h"
+#include "assistantdialog.h"              // AI 非模态对话框的手写控制类。
+#include "assistant/AgentController.h"    // 对话历史和模型-工具循环协调器。
+#include "domain/Feature.h"               // 读取多态 Feature 参数并调用 rebuild。
+#include "domain/FeatureRegistry.h"       // 动态生成新建/属性输入框的参数规则。
 
-#include <vector>               // std::vector
-#include <map>
-#include <string>               // std::string
+#include <vector>               // 保存控件、分类顺序和有效 Shape 列表。
+#include <map>                  // rebuildFeatureTree 按类型临时分组 Feature。
+#include <string>               // 稳定 ID、类型名和参数名使用标准字符串。
 #include <stdexcept>            // std::invalid_argument（捕获工厂的抛错）
 
 namespace {
@@ -37,7 +37,8 @@ namespace {
 // ------------------------------------------------------------
 // 参数英文名 → 中文标签（翻译是 UI 层的职责，domain 保持语言无关）
 // ------------------------------------------------------------
-QString paramLabel(const std::string& en) {
+QString paramLabel(const std::string& en)
+{
     if (en == "length") return QStringLiteral("长度");
     if (en == "width")  return QStringLiteral("宽度");
     if (en == "height") return QStringLiteral("高度");
@@ -48,7 +49,8 @@ QString paramLabel(const std::string& en) {
 // ------------------------------------------------------------
 // 类型名(domain 契约) → 中文名（菜单/对话框标题共用）
 // ------------------------------------------------------------
-QString kindLabel(const QString& kind) {
+QString kindLabel(const QString& kind)
+{
     if (kind == QStringLiteral("Box"))      return QStringLiteral("长方体");
     if (kind == QStringLiteral("Cylinder")) return QStringLiteral("圆柱体");
     if (kind == QStringLiteral("Sphere"))   return QStringLiteral("球体");
@@ -61,32 +63,32 @@ QString kindLabel(const QString& kind) {
 // 构造函数
 // ============================================================
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent)
-    , ui(new Ui::MainWindow)
+    : QMainWindow(parent)       // 建立 Qt 父子关系并初始化顶层窗口基类。
+    , ui(new Ui::MainWindow)    // 创建 uic 生成的界面包装对象。
 {
     ui->setupUi(this);          // 从 .ui 加载界面（含菜单、模型树、空属性舞台、3D 容器）
 
     // ---- 属性分组框内部整理：容器填满分组框、四边留 8px ----
-    auto* groupLayout = new QVBoxLayout(ui->groupBox);
-    groupLayout->setContentsMargins(8, 8, 8, 8);
-    groupLayout->addWidget(ui->paramPanelContainer);
+    auto* groupLayout = new QVBoxLayout(ui->groupBox); // 以 groupBox 为父对象自动管理布局。
+    groupLayout->setContentsMargins(8, 8, 8, 8);       // 标题框内部保留均匀留白。
+    groupLayout->addWidget(ui->paramPanelContainer);    // 空容器占满可用属性区域。
 
     // ---- 3D 视图嵌入右侧容器 ----
-    auto* vlayout = new QVBoxLayout(ui->viewportContainer);
-    vlayout->setContentsMargins(0, 0, 0, 0);
-    viewport_ = new forge::ui::Viewport3D(ui->viewportContainer);
-    vlayout->addWidget(viewport_);
+    auto* vlayout = new QVBoxLayout(ui->viewportContainer); // 容器负责管理视口尺寸。
+    vlayout->setContentsMargins(0, 0, 0, 0);                // 3D 画面贴合整个容器。
+    viewport_ = new forge::ui::Viewport3D(ui->viewportContainer); // 父对象自动释放视口。
+    vlayout->addWidget(viewport_); // 布局让视口随主窗口缩放。
 
     // 3D 拾取反向驱动模型树和属性面板，形成双向选择联动。
     connect(viewport_, &forge::ui::Viewport3D::shapeSelected, this,
             [this](int index) {
                 if (index < 0
                     || index >= static_cast<int>(viewportFeatureIds_.size())) {
-                    selectedFeatureId_.clear();
-                    ui->modelTree->clearSelection();
-                    ui->modelTree->setCurrentIndex(QModelIndex());
-                    rebuildParamPanel();
-                    ui->actionDeleteFeature->setEnabled(false);
+                    selectedFeatureId_.clear();               // 清除业务层选中 ID。
+                    ui->modelTree->clearSelection();           // 清除树的选择高亮。
+                    ui->modelTree->setCurrentIndex(QModelIndex()); // 清除当前索引。
+                    rebuildParamPanel();                       // 无选择时清空属性区。
+                    ui->actionDeleteFeature->setEnabled(false); // 禁止执行无目标删除。
                     statusBar()->showMessage(QStringLiteral("未选择特征"));
                     return;
                 }
@@ -97,12 +99,12 @@ MainWindow::MainWindow(QWidget *parent)
 
     // ---- 模型树接线：QTreeView 需要"数据模型"才有内容 ----
     treeModel_ = new QStandardItemModel(this);   // 父对象 = this，Qt 自动释放
-    ui->modelTree->setModel(treeModel_);
+    ui->modelTree->setModel(treeModel_); // QTreeView 只显示，不自行保存条目数据。
     // 用户点树的某一行 → 切到那一行对应的特征
     // 树现在是"分类文件夹 + 特征子项"结构，节点用 UserRole 保存稳定 Feature ID。
     connect(ui->modelTree, &QTreeView::clicked, this,
             [this](const QModelIndex& idx) {
-                if (!idx.isValid()) return;
+                if (!idx.isValid()) return; // 无效点击位置不对应任何树节点。
                 const QVariant data = treeModel_->data(idx, Qt::UserRole);
                 if (!data.isValid()) return;      // 点的是分类文件夹（没存下标）→ 忽略
                 selectFeature(data.toString().toStdString());
@@ -113,7 +115,7 @@ MainWindow::MainWindow(QWidget *parent)
     // 后面所有函数都会先按 ID 查找，空文档时安全跳过。
     rebuildFeatureTree();    // 空树（啥也没有，正常）
     rebuildParamPanel();     // 空面板（容器刚被清空）
-    setupAssistantDialog();
+    setupAssistantDialog(); // 创建一次 AI 窗口和 Controller，并完成全部信号连接。
     statusBar()->showMessage(QStringLiteral("用菜单\"新建\"添加你的第一个特征"));
     // 注意：这里不再 QTimer 首图——没有特征可显示；等用户新建第一个时
     // createFeatureFromDialog 会自己刷新视图（那时窗口早已显示、视图已就绪）。
@@ -149,8 +151,8 @@ void MainWindow::on_actionUndo_triggered()
         return;
     }
 
-    document_.undo();
-    refreshAfterHistoryChange();
+    document_.undo();            // 领域状态先恢复到上一张快照。
+    refreshAfterHistoryChange(); // 再让树、属性面板和视口同步新状态。
 }
 
 void MainWindow::on_actionRedo_triggered()
@@ -160,8 +162,8 @@ void MainWindow::on_actionRedo_triggered()
         return;
     }
 
-    document_.redo();
-    refreshAfterHistoryChange();
+    document_.redo();            // 领域状态前进到 Redo 栈顶快照。
+    refreshAfterHistoryChange(); // 所有展示层从 Document 重新读取。
 }
 
 void MainWindow::on_actionDeleteFeature_triggered()
@@ -189,28 +191,28 @@ void MainWindow::createFeatureFromDialog(const QString& type)
 {
     // ① 取出该类型要哪些参数（没有 → 类型不受支持，直接返回）
     const auto* descriptor = forge::domain::FeatureRegistry::find(type.toStdString());
-    if (!descriptor) return;
+    if (!descriptor) return; // 未登记类型没有参数规则，不能构造输入界面。
 
     // ② 用代码现造对话框：标题 + 每个参数一行（标签+数字框）
-    QDialog dlg(this);
+    QDialog dlg(this); // 栈上模态对话框在函数结束时自动销毁。
     dlg.setWindowTitle(QStringLiteral("新建") + kindLabel(type));   // "新建球体"…
     auto* form = new QFormLayout(&dlg);       // 表单布局：一行 = 标签 + 输入框
     std::vector<QDoubleSpinBox*> spins;       // 记下所有输入框，确定后好取值
 
     for (const auto& parameter : descriptor->parameters) {
-        auto* spin = new QDoubleSpinBox(&dlg);
-        spin->setRange(parameter.minimum, parameter.maximum);
-        spin->setDecimals(1);
-        spin->setValue(parameter.defaultValue);
-        form->addRow(paramLabel(parameter.name), spin);
-        spins.push_back(spin);
+        auto* spin = new QDoubleSpinBox(&dlg); // dlg 作为父对象自动管理输入框。
+        spin->setRange(parameter.minimum, parameter.maximum); // 套用 Registry 统一范围。
+        spin->setDecimals(1); // 当前尺寸界面显示并允许一位小数。
+        spin->setValue(parameter.defaultValue); // 使用 Descriptor 的默认创建值。
+        form->addRow(paramLabel(parameter.name), spin); // 一行加入中文标签和输入框。
+        spins.push_back(spin); // 保留与 Descriptor 相同的顺序，确定后读取数值。
     }
 
     // ③ 底部放 确定/取消 按钮组，并把按钮文字改成中文
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok
                                        | QDialogButtonBox::Cancel, &dlg);
-    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
-    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定")); // 本地化确认按钮。
+    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消")); // 本地化取消按钮。
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
     form->addRow(buttons);
@@ -223,12 +225,13 @@ void MainWindow::createFeatureFromDialog(const QString& type)
     // ⑤ 收集数值 → 工厂造特征（个数不对/未知类型会抛，捕获并提示）
     forge::domain::NumericParameters parameters;
     for (std::size_t i = 0; i < descriptor->parameters.size(); ++i) {
+        // 描述和输入框按同一顺序保存，因此可安全组合为“参数名 -> 用户值”。
         parameters.emplace(descriptor->parameters[i].name, spins[i]->value());
     }
 
     try {
         auto& feature = document_.createFeature(type.toStdString(), parameters);
-        selectedFeatureId_ = feature.id();
+        selectedFeatureId_ = feature.id(); // 新建成功后自动选中新对象。
     } catch (const std::invalid_argument& e) {
         statusBar()->showMessage(QStringLiteral("创建失败: %1").arg(e.what()));
         return;
@@ -259,28 +262,29 @@ void MainWindow::rebuildFeatureTree()
     // ① 按"首次出现顺序"把特征归类：kind -> 属于它的集合下标们
     std::vector<QString> kindOrder;                          // 分类顺序（如 长方体、圆柱体…）
     std::map<QString, std::vector<int>> featuresByKind;      // 类型名 -> 下标列表
-    const auto& features = document_.features();
+    const auto& features = document_.features(); // 借用文档容器，只读且不复制 unique_ptr。
     for (int i = 0; i < static_cast<int>(features.size()); ++i) {
         const QString kind = QString::fromStdString(features[i]->type());  // "Box"/"Cylinder"…
         if (featuresByKind.find(kind) == featuresByKind.end()) {
             kindOrder.push_back(kind);       // 第一次见到这个类型 → 记下它的位置
         }
-        featuresByKind[kind].push_back(i);
+        featuresByKind[kind].push_back(i); // 分类保存原文档下标，仍能取回真实对象。
     }
 
     // ② 一个类型一个"文件夹"，特征作为它的子项
     QStandardItem* selectedTreeItem = nullptr;    // 记住选中项对应的树节点（用于恢复高亮）
     for (const QString& kind : kindOrder) {
         auto* cat = new QStandardItem(kindLabel(kind));   // 文件夹文字：中文类型名
-        cat->setEditable(false);
+        cat->setEditable(false); // UI 树名称不允许直接编辑，避免与 Document 失同步。
 
         for (int i : featuresByKind[kind]) {
             auto* child = new QStandardItem(
                 QString::fromStdString(features[i]->id()));   // 子项文字：id（如 Box002）
-            child->setEditable(false);
+            child->setEditable(false); // Feature ID 由 Document 管理，界面不能重命名。
+            // UserRole 保存稳定 ID；显示文字变化时也不依赖行号定位对象。
             child->setData(QString::fromStdString(features[i]->id()), Qt::UserRole);
             if (features[i]->id() == selectedFeatureId_) selectedTreeItem = child;
-            cat->appendRow(child);
+            cat->appendRow(child); // 把具体 Feature 放入对应类型分类节点。
         }
         treeModel_->appendRow(cat);            // 文件夹进树
     }
@@ -304,15 +308,15 @@ void MainWindow::rebuildFeatureTree()
 void MainWindow::selectFeature(const std::string& id)
 {
     const auto* feature = document_.findFeature(id);
-    if (!feature) return;
-    selectedFeatureId_ = id;
+    if (!feature) return;      // 失效 ID 不改变当前界面状态。
+    selectedFeatureId_ = id;   // 所有 UI 联动都以这一稳定 ID 为真值。
     rebuildParamPanel();    // 面板换成这个特征的参数
 
     int selectedShapeIndex = -1;
     for (int i = 0; i < static_cast<int>(viewportFeatureIds_.size()); ++i) {
         if (viewportFeatureIds_[i] == id) {
-            selectedShapeIndex = i;
-            break;
+            selectedShapeIndex = i; // 找到视口中对应 AIS_Shape 的显示下标。
+            break;                  // ID 唯一，命中后停止扫描。
         }
     }
     viewport_->setSelectedIndex(selectedShapeIndex);
@@ -331,20 +335,20 @@ void MainWindow::selectFeature(const std::string& id)
 void MainWindow::rebuildParamPanel()
 {
     // ① 先清掉容器里上一次的输入框（布局和控件都要删）
-    QLayout* oldLayout = ui->paramPanelContainer->layout();
+    QLayout* oldLayout = ui->paramPanelContainer->layout(); // 可能为空或属于上次选择。
     if (oldLayout) {
         QLayoutItem* item;
         while ((item = oldLayout->takeAt(0)) != nullptr) {
-            if (QWidget* w = item->widget()) w->deleteLater();
-            delete item;
+            if (QWidget* w = item->widget()) w->deleteLater(); // 安排旧输入框安全延迟销毁。
+            delete item; // QLayoutItem 包装本身不归控件父子树管理，要立即释放。
         }
-        delete oldLayout;
+        delete oldLayout; // 所有子项取出后释放旧布局对象。
     }
 
     // ② 没有选中任何特征 → 面板留空
     auto* feature = document_.findFeature(selectedFeatureId_);
-    if (!feature) return;
-    const std::string featureId = feature->id();
+    if (!feature) return; // 没有有效选择时保持空面板。
+    const std::string featureId = feature->id(); // lambda 按值保存 ID，不长期保存裸指针。
 
     // ③ 按选中特征的真实参数生成输入框——parameters()（规矩①）驱动 UI！
     auto* form = new QFormLayout(ui->paramPanelContainer);
@@ -355,8 +359,8 @@ void MainWindow::rebuildParamPanel()
     const auto& params = feature->parameters();
 
     for (const auto& p : params) {
-        auto* spin = new QDoubleSpinBox(ui->paramPanelContainer);
-        spin->setDecimals(1);
+        auto* spin = new QDoubleSpinBox(ui->paramPanelContainer); // 父容器管理生命周期。
+        spin->setDecimals(1); // 与新建对话框保持一致的尺寸精度。
         // 键盘输入“50”时，默认会先为字符“5”发出一次 valueChanged，
         // 再为最终值“50”发出第二次，导致 Undo 历史记录两个中间状态。
         // 关闭 keyboardTracking 后，键盘编辑只在回车或失去焦点时提交最终值；
@@ -367,7 +371,7 @@ void MainWindow::rebuildParamPanel()
             spin->setRange(descriptor->minimum, descriptor->maximum);
         }
         spin->setValue(p.asDouble());         // 初值 = 模型当前值
-        form->addRow(paramLabel(p.name()), spin);
+        form->addRow(paramLabel(p.name()), spin); // 将中文标签和输入框加入当前表单。
 
         // ★ 动态控件没有固定的 on_ 名字 → 手动 connect（lambda 捕获参数名）。
         //   箭头调整会立即提交；键盘输入则在编辑完成后只提交最终数值。
@@ -375,7 +379,7 @@ void MainWindow::rebuildParamPanel()
                 [this, featureId, paramName = p.name()](double v) {
                     try {
                         document_.setParameter(featureId, paramName, v);
-                        refreshViewport();
+                        refreshViewport(); // Document 修改成功后重建所有有效几何。
                     } catch (const std::invalid_argument& e) {
                         statusBar()->showMessage(
                             QStringLiteral("修改失败: %1").arg(e.what()));
@@ -396,10 +400,10 @@ void MainWindow::refreshViewport()
     // validShapes 只收集成功生成的形状；selectedShapeIndex 记录当前选中项
     // 在“有效形状列表”里的位置，随后交给 Viewport3D 做高亮。
     std::vector<TopoDS_Shape> validShapes;
-    viewportFeatureIds_.clear();
+    viewportFeatureIds_.clear(); // 重新建立与本轮有效 Shape 完全一致的映射。
     const auto& features = document_.features();
-    validShapes.reserve(features.size());
-    viewportFeatureIds_.reserve(features.size());
+    validShapes.reserve(features.size()); // 最多每个 Feature 产生一个 Shape。
+    viewportFeatureIds_.reserve(features.size()); // 映射项数上限相同。
     int selectedShapeIndex = -1;
 
     for (int i = 0; i < static_cast<int>(features.size()); ++i) {
@@ -411,8 +415,8 @@ void MainWindow::refreshViewport()
         if (features[i]->id() == selectedFeatureId_) {
             selectedShapeIndex = static_cast<int>(validShapes.size());
         }
-        validShapes.push_back(shape);
-        viewportFeatureIds_.push_back(features[i]->id());
+        validShapes.push_back(shape); // 仅把非空 OCCT Shape 交给显示层。
+        viewportFeatureIds_.push_back(features[i]->id()); // 同步记录同位置 Feature ID。
     }
 
     // ② Viewport3D 只认识 TopoDS_Shape，不认识 Feature：继续保持业务与显示解耦。
@@ -437,6 +441,7 @@ void MainWindow::refreshAfterHistoryChange()
 {
     if (!document_.findFeature(selectedFeatureId_)) {
         const auto& features = document_.features();
+        // 原对象若被撤销/删除，优先选择剩余文档末项；空文档则清空选择。
         selectedFeatureId_ = features.empty() ? std::string() : features.back()->id();
     }
 
@@ -447,7 +452,7 @@ void MainWindow::refreshAfterHistoryChange()
         if (viewport_) {
             viewport_->showShapes({}, -1);
         }
-        viewportFeatureIds_.clear();
+        viewportFeatureIds_.clear(); // 场景为空时映射也必须为空，防止旧下标残留。
         statusBar()->showMessage(QStringLiteral("文档为空"));
         return;
     }
@@ -462,9 +467,9 @@ void MainWindow::setupAssistantDialog()
 
     // 工具栏的 Designer Action 打开同一个非模态窗口；重复点击不会创建多份会话。
     connect(ui->actionAI, &QAction::triggered, this, [this]() {
-        assistantDialog_->show();
-        assistantDialog_->raise();
-        assistantDialog_->activateWindow();
+        assistantDialog_->show();           // 首次显示或从隐藏状态恢复窗口。
+        assistantDialog_->raise();          // 把已有窗口提升到同应用其他窗口之前。
+        assistantDialog_->activateWindow(); // 请求窗口系统把键盘焦点交给它。
     });
 
     // AgentController 是 QObject 子对象，MainWindow 析构时由 Qt 自动释放。
@@ -474,6 +479,7 @@ void MainWindow::setupAssistantDialog()
 
     connect(assistantDialog_, &AssistantDialog::messageSubmitted,
             this, [this](const QString& message) {
+                // 对话框已经有一层禁用保护；这里再检查一次避免竞态式重复提交。
                 if (!agentController_->isBusy()) agentController_->submit(message);
             });
 
@@ -494,7 +500,7 @@ void MainWindow::setupAssistantDialog()
     connect(agentController_, &forge::assistant::AgentController::modelChanged,
             this, [this](const QString& featureId) {
                 // 选中新建或刚修改的特征，再同步重建树、参数表和三维视图。
-                selectedFeatureId_ = featureId.toStdString();
+                selectedFeatureId_ = featureId.toStdString(); // 选中工具刚创建或修改的对象。
                 rebuildFeatureTree();
                 rebuildParamPanel();
                 refreshViewport();

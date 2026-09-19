@@ -10,12 +10,12 @@
 //   Viewport3D 只认识"形状(Shape)"，不认识"Box/圆柱"这些业务概念。
 //   （对应需求文档："GUI 与业务逻辑解耦"）
 // ============================================================
-#pragma once
+#pragma once // 3D 控件会被窗口实现和构建系统包含，只定义一次。
 
 // ---- Qt 部分 ----
 #include <QWidget>                    // 基类：Qt 的"控件"（能放进窗口的东西）
 #include <QTimer>                     // 定时器：持续刷新画面（OCCT 不会自己重绘）
-#include <QPoint>
+#include <QPoint>                     // 保存按下位置和上一帧鼠标位置。
 #include <vector>                     // std::vector：一次接收并显示多个形状
 
 // ---- OCCT 部分 ----
@@ -66,10 +66,10 @@ private:
     void initViewer();    // 初始化 OCCT 3D 场景（窗口显示后调一次）
     bool inited_ = false; // 防止 initViewer 被多次调用
     QTimer refreshTimer_; // 持续刷新：OCCT 画面会被覆盖，必须定时重绘
-    QPoint pressPosition_;
-    QPoint lastMousePosition_;
-    bool rotating_ = false;
-    bool panning_ = false;
+    QPoint pressPosition_;           // 用于区分单击选择和超过阈值的拖动。
+    QPoint lastMousePosition_;       // 平移时计算相邻鼠标事件的位移量。
+    bool rotating_ = false;          // 中键拖动且未按 Shift 时为 true。
+    bool panning_ = false;           // Shift+中键拖动期间为 true。
 
     // OCCT 的"句柄"（智能指针）——对象生命周期自动管理
     occ::handle<V3d_Viewer>             viewer_;    // 场景容器

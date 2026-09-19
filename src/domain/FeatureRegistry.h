@@ -1,14 +1,14 @@
-#pragma once
+#pragma once // Registry 是跨 UI、AI、Document 共享的头文件，只能定义一次。
 
-#include <memory>
-#include <string>
-#include <string_view>
-#include <unordered_map>
-#include <vector>
+#include <memory>        // create() 用 unique_ptr 返回新对象的唯一所有权。
+#include <string>        // 保存类型名、参数名和 Feature ID。
+#include <string_view>   // 查找接口只借用字符串，不产生额外复制。
+#include <unordered_map> // NumericParameters 保存“参数名 -> 数值”。
+#include <vector>        // 保持类型列表和参数显示顺序。
 
 namespace forge::domain {
 
-class Feature;
+class Feature; // 返回值只需要声明类名，完整定义留给 .cpp 包含。
 
 // 外部统一使用“参数名 -> 数值”，例如 {"radius": 20}。
 // unordered_map 的顺序不重要，Registry 会按描述中的顺序调用具体构造函数。
@@ -24,8 +24,8 @@ struct ParameterDescriptor {
 
 // 一种 Feature 的公共说明，例如 Box 以及它的 length/width/height。
 struct FeatureDescriptor {
-    std::string type;
-    std::vector<ParameterDescriptor> parameters;
+    std::string type;                            // 稳定类型名，例如 Box。
+    std::vector<ParameterDescriptor> parameters; // 该类型全部参数的顺序和规则。
 };
 
 // ============================================================

@@ -1,10 +1,10 @@
-#include "assistant/ToolRegistry.h"
+#include "assistant/ToolRegistry.h" // ToolRegistry 的公开接口声明。
 
-#include "application/ModelDocument.h"
-#include "domain/Feature.h"
-#include "domain/FeatureRegistry.h"
+#include "application/ModelDocument.h" // 真正执行查询和修改的文档 API。
+#include "domain/Feature.h"            // 读取 Feature 的 ID、类型和参数。
+#include "domain/FeatureRegistry.h"    // 生成可用类型枚举并创建具体 Feature。
 
-#include <stdexcept>
+#include <stdexcept> // invalid_argument 用于统一表达模型参数或工具名错误。
 
 namespace forge::assistant {
 namespace {
@@ -55,7 +55,7 @@ QString requireString(const QJsonObject& object, const QString& key)
 } // namespace
 
 ToolRegistry::ToolRegistry(application::ModelDocument& document)
-    : document_(document)
+    : document_(document) // 保存引用，不复制整份文档，也不接管其生命周期。
 {
     // Registry 不拥有 Document；MainWindow 保证它的生命周期更长。
 }
@@ -126,10 +126,11 @@ QJsonObject ToolRegistry::execute(const QString& toolName, const QJsonObject& ar
 {
     // 第一版只有四个白名单工具。这里故意不提供“执行任意代码/任意 OCCT API”。
     try {
-        if (toolName == "list_features") return listFeatures();
-        if (toolName == "get_feature") return getFeature(arguments);
-        if (toolName == "create_feature") return createFeature(arguments);
-        if (toolName == "set_parameter") return setParameter(arguments);
+        if (toolName == "list_features") return listFeatures();       // 无参数，只读全部对象。
+        if (toolName == "get_feature") return getFeature(arguments); // 按稳定 ID 只读一个对象。
+        if (toolName == "create_feature") return createFeature(arguments); // 创建并记录 Undo。
+        if (toolName == "set_parameter") return setParameter(arguments);   // 修改并记录 Undo。
+        // 任何未登记名称都拒绝，模型无法借此调用任意本地函数。
         throw std::invalid_argument(("未知工具: " + toolName).toStdString());
     } catch (const std::exception& error) {
         // QString::fromUtf8 保留 C++ 异常消息中的中文内容。
@@ -147,6 +148,7 @@ QJsonObject ToolRegistry::featureToJson(const domain::Feature& feature) const
     // Parameter 列表转为具名对象，例如 {"length":100,"width":50}。
     QJsonObject parameters;
     for (const auto& parameter : feature.parameters()) {
+        // JSON 对象以参数名为键、当前数值为值，天然适合模型读取和再次引用。
         parameters.insert(QString::fromStdString(parameter.name()), parameter.asDouble());
     }
     // 统一返回结构能让 list/get/create/set 的结果保持一致。
@@ -163,6 +165,7 @@ QJsonObject ToolRegistry::listFeatures() const
     // 空文档合法，返回 success=true 和空数组，而不是把“没有模型”当成错误。
     QJsonArray features;
     for (const auto& feature : document_.features()) {
+        // unique_ptr 解引用后得到真正的 Feature，再转换为不含指针的 JSON 快照。
         features.append(featureToJson(*feature));
     }
     return {
@@ -182,7 +185,7 @@ QJsonObject ToolRegistry::getFeature(const QJsonObject& arguments) const
     }
     // 在统一 Feature JSON 上增加执行状态，供模型可靠判断查询是否成功。
     QJsonObject result = featureToJson(*feature);
-    result.insert("success", true);
+    result.insert("success", true); // 成功字段让模型不必通过缺少 error 来猜测结果。
     return result;
 }
 
@@ -206,6 +209,7 @@ QJsonObject ToolRegistry::createFeature(const QJsonObject& arguments)
         if (!it.value().isDouble()) {
             throw std::invalid_argument(("参数必须是数值: " + it.key()).toStdString());
         }
+        // emplace 将 Qt 字符串/数值转换成领域层使用的 std::string/double。
         parameters.emplace(it.key().toStdString(), it.value().toDouble());
     }
 
@@ -213,8 +217,8 @@ QJsonObject ToolRegistry::createFeature(const QJsonObject& arguments)
     domain::Feature& feature = document_.createFeature(type.toStdString(), parameters);
     // 返回完整新对象而不只返回“成功”，方便模型准确告诉用户生成了什么。
     QJsonObject result = featureToJson(feature);
-    result.insert("success", true);
-    result.insert("model_changed", true);
+    result.insert("success", true);        // 告诉模型本地创建已经真实成功。
+    result.insert("model_changed", true);  // 告诉 Controller 需要刷新树、属性和三维视图。
     return result;
 }
 
@@ -236,8 +240,8 @@ QJsonObject ToolRegistry::setParameter(const QJsonObject& arguments)
     // 修改成功后重新从 Document 读取，返回的是最终生效值而不是模型请求值。
     const domain::Feature* feature = document_.findFeature(featureId.toStdString());
     QJsonObject result = featureToJson(*feature);
-    result.insert("success", true);
-    result.insert("model_changed", true);
+    result.insert("success", true);       // 工具执行结果可被下一轮模型可靠判断。
+    result.insert("model_changed", true); // 参数变化会影响几何，因此要求 UI 重建。
     return result;
 }
 

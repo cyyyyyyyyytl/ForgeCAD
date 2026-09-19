@@ -1,13 +1,15 @@
-#pragma once
+#pragma once // 防止头文件被同一个翻译单元重复包含。
 
-#include <QJsonArray>
-#include <QJsonObject>
-#include <QString>
+#include <QJsonArray>  // schemas() 返回一组可提供给模型的工具描述。
+#include <QJsonObject> // 工具参数和执行结果都使用 JSON 对象承载。
+#include <QString>     // 工具名和 JSON 字符串使用 Qt Unicode 字符串。
 
 namespace forge::application {
+// 只保存引用，因此头文件知道类名即可；完整定义放在 .cpp 中包含。
 class ModelDocument;
 }
 
+// 序列化辅助函数只接收 Feature 引用，同样使用前向声明降低头文件耦合。
 namespace forge::domain { class Feature; }
 
 namespace forge::assistant {
@@ -22,6 +24,7 @@ namespace forge::assistant {
 // ============================================================
 class ToolRegistry {
 public:
+    // 构造时必须提供当前文档；Registry 不复制也不拥有它。
     explicit ToolRegistry(application::ModelDocument& document);
 
     QJsonArray schemas() const; // 返回发给模型的全部 function tool JSON Schema。

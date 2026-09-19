@@ -1,11 +1,11 @@
-#include "domain/FeatureRegistry.h"
+#include "domain/FeatureRegistry.h" // Descriptor、NumericParameters 和 Registry 声明。
 
-#include "domain/BoxFeature.h"
-#include "domain/CylinderFeature.h"
-#include "domain/SphereFeature.h"
+#include "domain/BoxFeature.h"      // Box 分支需要完整类型才能 make_unique。
+#include "domain/CylinderFeature.h" // Cylinder 分支需要完整类型。
+#include "domain/SphereFeature.h"   // Sphere 分支需要完整类型。
 
-#include <algorithm>
-#include <stdexcept>
+#include <algorithm> // std::find_if 负责按名称查找类型和参数。
+#include <stdexcept> // 区分用户输入错误 invalid_argument 和开发遗漏 logic_error。
 
 namespace forge::domain {
 
@@ -27,18 +27,19 @@ const std::vector<FeatureDescriptor>& FeatureRegistry::all()
             {"radius", 20.0, 1.0, 10000.0},
         }},
     };
-    return descriptors;
+    return descriptors; // 返回同一份静态登记表的只读引用，不发生容器复制。
 }
 
 const FeatureDescriptor* FeatureRegistry::find(std::string_view type)
 {
     // 当前只有三类特征，线性查找比额外索引更直接。
-    const auto& descriptors = all();
+    const auto& descriptors = all(); // 借用全局唯一登记表，避免复制全部描述。
     const auto it = std::find_if(
         descriptors.begin(), descriptors.end(),
         [type](const FeatureDescriptor& descriptor) {
             return descriptor.type == type;
         });
+    // end 表示没找到；否则 *it 是对象，&*it 取得登记表中该对象的地址。
     return it == descriptors.end() ? nullptr : &*it;
 }
 
@@ -49,7 +50,7 @@ const ParameterDescriptor* FeatureRegistry::findParameter(
     // 先找到所属特征，再在它的参数表中寻找，避免不同类型参数串用。
     const FeatureDescriptor* feature = find(type);
     if (!feature) {
-        return nullptr;
+        return nullptr; // 连类型都不存在，自然不可能存在它的参数说明。
     }
 
     const auto it = std::find_if(
@@ -57,6 +58,7 @@ const ParameterDescriptor* FeatureRegistry::findParameter(
         [parameterName](const ParameterDescriptor& parameter) {
             return parameter.name == parameterName;
         });
+    // 返回登记表内部参数对象的只读地址，调用方不能修改公共规则。
     return it == feature->parameters.end() ? nullptr : &*it;
 }
 
@@ -77,7 +79,7 @@ std::unique_ptr<Feature> FeatureRegistry::create(
 
     // unordered_map 没有固定顺序，所以按 Descriptor 顺序整理成 values。
     std::vector<double> values;
-    values.reserve(descriptor->parameters.size());
+    values.reserve(descriptor->parameters.size()); // 预留准确容量，避免循环中扩容。
     for (const auto& parameter : descriptor->parameters) {
         const auto value = parameters.find(parameter.name);
         if (value == parameters.end()) {
@@ -87,6 +89,7 @@ std::unique_ptr<Feature> FeatureRegistry::create(
             value->second > parameter.maximum) {
             throw std::invalid_argument(type + " 参数超出范围: " + parameter.name);
         }
+        // 按 Descriptor 的稳定顺序放入数组，供位置参数构造函数安全使用。
         values.push_back(value->second);
     }
 

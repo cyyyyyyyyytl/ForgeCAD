@@ -1,6 +1,6 @@
-#pragma once
+#pragma once // 防止 BoxFeature 类被重复定义。
 
-#include "domain/Feature.h"
+#include "domain/Feature.h" // BoxFeature 继承公共 Feature 接口并使用 Parameter。
 
 namespace forge::domain {
 
@@ -10,10 +10,10 @@ public:
     // 构造顺序固定为 length、width、height，与 Registry 的说明保持一致。
     BoxFeature(std::string id, double length, double width, double height);
 
-    const std::vector<Parameter>& parameters() const override;
-    void setParameter(const std::string& name, ParameterValue value) override;
-    std::string validate() const override;
-    TopoDS_Shape rebuild() const override;
+    const std::vector<Parameter>& parameters() const override; // 只读返回长、宽、高。
+    void setParameter(const std::string& name, ParameterValue value) override; // 按名字修改。
+    std::string validate() const override;   // 检查所有尺寸必须大于零。
+    TopoDS_Shape rebuild() const override;   // 用当前尺寸重新生成 OCCT 长方体。
 
 private:
     // 使用有序 vector，既保持属性面板显示顺序，也便于 rebuild 按固定顺序取值。

@@ -1,5 +1,6 @@
-#pragma once
-#include <string>
+#pragma once // 版本接口可能被主程序和测试同时包含，防止重复定义。
+
+#include <string> // string() 以标准字符串返回完整语义化版本号。
 
 namespace forge::core {
 
