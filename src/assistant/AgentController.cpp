@@ -2,6 +2,7 @@
 
 #include <QJsonDocument>   // 在 JSON 对象和网络传输用字节串之间转换。
 #include <QJsonParseError> // 保存 JSON 解析失败的具体状态。
+#include <QMessageBox>    // AI 请求删除时，等待用户在本机确认目标特征。
 
 namespace forge::assistant {
 
@@ -22,7 +23,8 @@ AgentController::AgentController(application::ModelDocument& document,
         {"content",
          "你是 ForgeCAD AI 建模助手。尺寸单位为毫米。"
          "只能使用提供的工具查询或修改模型；工具返回 success=true 后才能声称操作成功。"
-         "缺少必要尺寸时先询问用户，不要猜测。回答使用简洁中文。"},
+         "缺少必要尺寸时先询问用户，不要猜测。"
+         "删除操作若被用户取消，不要重试，应告知用户未删除。回答使用简洁中文。"},
     });
 
     // 网络成功和失败分别进入两个处理槽，保持状态收口在 Controller。
@@ -127,13 +129,48 @@ void AgentController::handleResponse(const QJsonObject& response)
                 {"success", false},
                 {"error", "工具 arguments 不是合法 JSON 对象"},
             };
+        } else if (toolName == "delete_feature") {
+            // 删除先检查目标是否存在，再弹确认框；确认前不调用有写入能力的工具。
+            QJsonObject args = argumentDocument.object();
+            const QJsonValue rawId = args.value("feature_id");
+            const QString id = rawId.toString().trimmed();
+            if (!rawId.isString() || id.isEmpty()) {
+                result = {
+                    {"success", false},
+                    {"error", "缺少要删除的 feature_id"},
+                };
+            } else {
+                // 把展示给用户的 ID 与真正提交给工具的 ID 统一成去空格后的值。
+                args.insert("feature_id", id);
+                const QJsonObject target = tools_.execute("get_feature", {{"feature_id", id}});
+                if (!target.value("success").toBool()) {
+                    result = target; // 目标不存在时沿用工具错误，不弹没有意义的确认框。
+                } else {
+                    const auto answer = QMessageBox::question(
+                        qobject_cast<QWidget*>(parent()),
+                        "确认删除",
+                        QString("确定删除 %1（%2）吗？")
+                            .arg(id, target.value("type").toString()),
+                        QMessageBox::Yes | QMessageBox::No,
+                        QMessageBox::No);
+                    if (answer == QMessageBox::Yes) {
+                        result = tools_.execute(toolName, args);
+                    } else {
+                        result = {
+                            {"success", false},
+                            {"error", "用户取消删除"},
+                        };
+                    }
+                }
+            }
         } else {
-            // 只有合法 JSON 对象才进入白名单；Registry 还会继续做业务参数校验。
+            // 其他工具保持统一分发，不需要在 Agent 中逐个识别工具名。
             result = tools_.execute(toolName, argumentDocument.object());
         }
 
-        // 不论成功失败都告诉用户执行到了哪个工具；详细结果继续交给模型解释。
-        emit statusMessage(QString("已执行工具：%1").arg(toolName));
+        // 取消或参数错误也会生成工具结果，但不能在状态栏误称执行成功。
+        emit statusMessage(QString("工具%1：%2")
+                               .arg(result.value("success").toBool() ? "成功" : "未完成", toolName));
 
         // 只有 Registry 明确标记 model_changed 才通知 UI 重建几何；查询工具不刷新。
         if (result.value("model_changed").toBool()) {

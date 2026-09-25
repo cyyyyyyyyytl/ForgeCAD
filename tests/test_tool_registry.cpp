@@ -14,17 +14,19 @@ using forge::assistant::ToolRegistry;
 // 因此结果稳定、无费用，也能精确定位是协议层还是网络层出错。
 // ============================================================
 
-// Registry 必须只暴露当前约定的四个白名单工具。
-TEST(ToolRegistryTest, ExposesFourModelingTools)
+// Registry 必须只暴露当前约定的五个白名单工具。
+TEST(ToolRegistryTest, ExposesFiveModelingTools)
 {
     ModelDocument document;         // 使用空文档隔离本测试。
     ToolRegistry registry(document); // Registry 保存对该文档的非拥有引用。
 
-    // 同时抽查第一个工具名，避免数组虽然为 4 但内容登记错误。
+    // 同时抽查首尾工具名，避免数量正确但删除工具未正确登记。
     const QJsonArray schemas = registry.schemas();
-    ASSERT_EQ(schemas.size(), 4); // 工具数量不符时停止，避免下面访问 schemas[0] 越界。
+    ASSERT_EQ(schemas.size(), 5); // 工具数量不符时停止，避免下面访问数组越界。
     EXPECT_EQ(schemas[0].toObject()["function"].toObject()["name"].toString(),
               "list_features");
+    EXPECT_EQ(schemas[4].toObject()["function"].toObject()["name"].toString(),
+              "delete_feature");
 }
 
 // 模拟模型请求 create_feature，再用 list_features 查询刚创建的对象。
@@ -79,4 +81,38 @@ TEST(ToolRegistryTest, ModifiesFeatureAndRejectsInvalidCalls)
     })["success"].toBool());
     // 工具白名单外的名称必须拒绝，防止模型调用未授权能力。
     EXPECT_FALSE(registry.execute("unknown_tool", {})["success"].toBool());
+}
+
+// 删除工具要报告已删除的 ID，并允许用户随后通过 Document::undo() 恢复。
+TEST(ToolRegistryTest, DeletesFeatureAndCanUndo)
+{
+    ModelDocument document;
+    ToolRegistry registry(document);
+    document.createFeature("Sphere", {{"radius", 20.0}});
+
+    const QJsonObject deleted = registry.execute("delete_feature", {{"feature_id", "Sphere001"}});
+    EXPECT_TRUE(deleted["success"].toBool());
+    EXPECT_TRUE(deleted["model_changed"].toBool());
+    EXPECT_EQ(deleted["feature_id"].toString(), "Sphere001");
+    EXPECT_EQ(document.findFeature("Sphere001"), nullptr);
+
+    document.undo();
+    EXPECT_NE(document.findFeature("Sphere001"), nullptr);
+}
+
+// 非法目标不应删除已有特征，也不应新增一次撤销记录。
+TEST(ToolRegistryTest, RejectsInvalidDeleteWithoutChangingDocument)
+{
+    ModelDocument document;
+    ToolRegistry registry(document);
+    document.createFeature("Sphere", {{"radius", 20.0}});
+
+    EXPECT_FALSE(registry.execute("delete_feature", {})["success"].toBool());
+    EXPECT_FALSE(registry.execute("delete_feature", {{"feature_id", "Sphere999"}})["success"].toBool());
+    EXPECT_NE(document.findFeature("Sphere001"), nullptr);
+
+    // 撤销栈应仍只含最初的创建：一次 undo 后文档应为空。
+    document.undo();
+    EXPECT_TRUE(document.features().empty());
+    EXPECT_FALSE(document.canUndo());
 }

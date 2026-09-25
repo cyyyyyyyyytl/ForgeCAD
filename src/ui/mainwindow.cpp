@@ -499,8 +499,14 @@ void MainWindow::setupAssistantDialog()
     // 工具真正修改模型后才刷新 UI；普通问答和查询不会触发不必要的 OCCT 重建。
     connect(agentController_, &forge::assistant::AgentController::modelChanged,
             this, [this](const QString& featureId) {
-                // 选中新建或刚修改的特征，再同步重建树、参数表和三维视图。
-                selectedFeatureId_ = featureId.toStdString(); // 选中工具刚创建或修改的对象。
+                // 创建/修改时选中新对象；删除时 ID 已不存在，需走空文档也能处理的刷新路径。
+                selectedFeatureId_ = featureId.toStdString();
+
+                if (!document_.findFeature(selectedFeatureId_)) {
+                    refreshAfterHistoryChange();
+                    return;
+                }
+
                 rebuildFeatureTree();
                 rebuildParamPanel();
                 refreshViewport();

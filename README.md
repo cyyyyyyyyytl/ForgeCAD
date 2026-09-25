@@ -47,7 +47,8 @@ ctest --test-dir build -C Release
 ## AI 建模助手（DeepSeek）
 
 程序右侧的“AI 建模助手”通过 DeepSeek Tool Calling 调用 ForgeCAD 的模型文档接口。
-当前支持查询特征、创建 Box/Cylinder/Sphere，以及按 Feature ID 修改数值参数。
+当前支持查询特征、创建 Box/Cylinder/Sphere、按 Feature ID 修改数值参数，
+以及在本机确认后删除指定特征；删除可通过撤销恢复。
 
 运行前在系统或 IDE 的运行环境中配置：
 

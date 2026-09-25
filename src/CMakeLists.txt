@@ -16,6 +16,7 @@ add_library(forgecore
     # domain/geometry：参数化 Feature 及 OCCT 构造。
     domain/BoxFeature.cpp
     domain/FeatureRegistry.cpp
+    domain/DependencyGraph.cpp
     geometry/ShapeFactory.cpp
     # Viewport3D 可被不同窗口复用，因此放进核心库；MainWindow 不放这里。
     ui/Viewport3D.cpp

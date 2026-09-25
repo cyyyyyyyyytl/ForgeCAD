@@ -38,7 +38,7 @@ private:
     QJsonObject getFeature(const QJsonObject& arguments) const; // get_feature 实现。
     QJsonObject createFeature(const QJsonObject& arguments);  // create_feature 实现。
     QJsonObject setParameter(const QJsonObject& arguments);   // set_parameter 实现。
-
+    QJsonObject deleteFeature(const QJsonObject& arguments); // delete_feature 实现。
     // 非拥有引用：实际文档由 MainWindow 持有，并且比 ToolRegistry 活得久。
     application::ModelDocument& document_;
 };

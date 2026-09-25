@@ -80,7 +80,7 @@ QJsonArray ToolRegistry::schemas() const
         {"description", "Feature ID，例如 Box001"},
     };
 
-    // list/get 是只读工具；create/set 会修改 Document 并返回 model_changed=true。
+    // list/get 是只读工具；create/set/delete 会修改 Document 并返回 model_changed=true。
     return {
         functionTool(
             "list_features",
@@ -112,6 +112,10 @@ QJsonArray ToolRegistry::schemas() const
                 {"parameter_name", QJsonObject{{"type", "string"}}},
                 {"value", QJsonObject{{"type", "number"}}},
             }, {"feature_id", "parameter_name", "value"})),
+        functionTool(
+            "delete_feature",
+            "按 Feature ID 删除已有特征；ForgeCAD 会先弹出本机确认框。",
+            objectSchema({{"feature_id", featureIdProperty}}, {"feature_id"})),
     };
 }
 
@@ -124,12 +128,13 @@ QJsonArray ToolRegistry::schemas() const
 // ============================================================
 QJsonObject ToolRegistry::execute(const QString& toolName, const QJsonObject& arguments)
 {
-    // 第一版只有四个白名单工具。这里故意不提供“执行任意代码/任意 OCCT API”。
+    // 只允许明确登记的五个工具，不提供“执行任意代码/任意 OCCT API”。
     try {
         if (toolName == "list_features") return listFeatures();       // 无参数，只读全部对象。
         if (toolName == "get_feature") return getFeature(arguments); // 按稳定 ID 只读一个对象。
         if (toolName == "create_feature") return createFeature(arguments); // 创建并记录 Undo。
         if (toolName == "set_parameter") return setParameter(arguments);   // 修改并记录 Undo。
+        if (toolName == "delete_feature") return deleteFeature(arguments); // 删除并记录 Undo。
         // 任何未登记名称都拒绝，模型无法借此调用任意本地函数。
         throw std::invalid_argument(("未知工具: " + toolName).toStdString());
     } catch (const std::exception& error) {
@@ -243,6 +248,21 @@ QJsonObject ToolRegistry::setParameter(const QJsonObject& arguments)
     result.insert("success", true);       // 工具执行结果可被下一轮模型可靠判断。
     result.insert("model_changed", true); // 参数变化会影响几何，因此要求 UI 重建。
     return result;
+}
+
+// 删除工具只负责业务写入；Agent 已在调用 execute() 前处理用户确认。
+QJsonObject ToolRegistry::deleteFeature(const QJsonObject& arguments)
+{
+    // 缺少 ID 或 ID 不是非空字符串时，统一交给 execute() 捕获并返回错误 JSON。
+    const QString id = requireString(arguments, "feature_id");
+    // Document 负责确认目标存在、删除对象并保存可撤销的旧状态。
+    document_.deleteFeature(id.toStdString());
+    // 已删除对象不能再解引用；回传稳定 ID 供界面刷新并供模型总结。
+    return {
+        {"success", true},
+        {"model_changed", true},
+        {"feature_id", id},
+    };
 }
 
 } // namespace forge::assistant
