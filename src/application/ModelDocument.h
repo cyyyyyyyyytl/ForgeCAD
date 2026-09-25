@@ -1,7 +1,7 @@
 #pragma once // ModelDocument 被 UI、AI 和测试共同包含，防止头文件重复展开。
 
 #include "domain/FeatureRegistry.h" // 公开接口使用 NumericParameters 类型。
-
+#include "domain/DependencyGraph.h"
 #include <map>         // 保存“特征类型 -> 已使用序号”的稳定计数器。
 #include <memory>      // unique_ptr 表达文档对每个 Feature 的唯一所有权。
 #include <string>      // 保存 ID、类型名和快照中的参数名。
@@ -40,10 +40,15 @@ public:
 
     // 创建特征：自动分配 Box001 形式的 ID，校验后写入文档并记录 Undo。
     domain::Feature& createFeature( const std::string& type,const domain::NumericParameters& parameters);
+    // 登记现有特征间的依赖关系，并把修改作为一次可撤销操作。
+    // 目前只记录关系；真正使用上游几何的派生 Feature 留待后续实现。
+    void addDependency(std::string_view featureId, std::string_view dependsOnId);
     // 修改特征的一个参数；对象、参数或范围非法时抛出 invalid_argument。
     void setParameter( std::string_view featureId, std::string_view parameterName,double value);
-    // 按稳定 ID 删除特征，并把删除前的整个状态加入 Undo 历史。
+    // 按稳定 ID 连同所有下游特征删除，并把整个操作记为一次 Undo。
     void deleteFeature(std::string_view featureId);
+    // 删除前只读预览：返回依赖者优先、目标最后的全部受影响 ID。
+    std::vector<std::string> deletionOrder(std::string_view featureId) const;
 
     // 历史为空时 undo/redo 安静返回；调用方可先用 canUndo/canRedo 更新按钮状态。
     void undo();
@@ -67,16 +72,21 @@ private:
         domain::NumericParameters parameters; // 重建该对象所需的全部具名数值。
     };
     // 一个 DocumentState 就是一张“整个文档在某一时刻的照片”。
-    using DocumentState = std::vector<FeatureState>;
+    struct DocumentState {
+        std::vector<FeatureState> features;
+        domain::DependencyGraph graph;
+    };
 
     // 以下方法只服务于 Document 内部，上层不需要理解即可使用建模 API。
     std::string nextFeatureId(std::string_view type); // 生成 Box001 形式且不重复的 ID。
     DocumentState captureState() const;               // 深拷贝当前轻量模型数据。
-    void restoreState(const DocumentState& state);    // 按快照完整重建 Feature 容器。
+    void restoreState(const DocumentState& state);    // 按快照重建 Feature 并恢复依赖图。
     void rememberBeforeChange(DocumentState state);   // 推入 Undo 并清空分叉的 Redo。
 
     // unique_ptr 表达唯一所有权：Feature 的生命周期由文档统一管理。
     std::vector<std::unique_ptr<domain::Feature>> features_;
+    domain::DependencyGraph dependencyGraph_; // 与 features_ 同步的特征 ID 依赖关系。
+
     // 各类型独立计数，例如 Box 和 Sphere 都可从 001 开始。
     std::map<std::string, int> sequenceByType_;
     // vector 末尾是栈顶；新操作保存“操作前状态”并清空 redoStack_。

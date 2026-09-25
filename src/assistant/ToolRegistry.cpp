@@ -255,6 +255,11 @@ QJsonObject ToolRegistry::deleteFeature(const QJsonObject& arguments)
 {
     // 缺少 ID 或 ID 不是非空字符串时，统一交给 execute() 捕获并返回错误 JSON。
     const QString id = requireString(arguments, "feature_id");
+    // 先记录整组受影响 ID；删除后对象已不存在，不能再查询它们。
+    QJsonArray deletedIds;
+    for (const std::string& affectedId : document_.deletionOrder(id.toStdString())) {
+        deletedIds.append(QString::fromStdString(affectedId));
+    }
     // Document 负责确认目标存在、删除对象并保存可撤销的旧状态。
     document_.deleteFeature(id.toStdString());
     // 已删除对象不能再解引用；回传稳定 ID 供界面刷新并供模型总结。
@@ -262,6 +267,7 @@ QJsonObject ToolRegistry::deleteFeature(const QJsonObject& arguments)
         {"success", true},
         {"model_changed", true},
         {"feature_id", id},
+        {"deleted_feature_ids", deletedIds},
     };
 }
 

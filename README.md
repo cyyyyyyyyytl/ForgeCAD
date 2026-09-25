@@ -48,7 +48,8 @@ ctest --test-dir build -C Release
 
 程序右侧的“AI 建模助手”通过 DeepSeek Tool Calling 调用 ForgeCAD 的模型文档接口。
 当前支持查询特征、创建 Box/Cylinder/Sphere、按 Feature ID 修改数值参数，
-以及在本机确认后删除指定特征；删除可通过撤销恢复。
+以及在本机确认后删除指定特征。若该特征有依赖者，确认框会列出所有连带删除的 ID；
+整组删除可通过一次撤销恢复。
 
 运行前在系统或 IDE 的运行环境中配置：
 

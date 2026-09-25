@@ -53,6 +53,7 @@ private:
 
     static constexpr int MaxAgentSteps = 6; // 单次用户请求的最大工具轮数，防止死循环。
     DeepSeekClient client_;                // 只负责异步 HTTP，不理解 CAD 工具。
+    const application::ModelDocument& document_; // 只读预览删除范围；写入仍统一走 ToolRegistry。
     ToolRegistry tools_;                   // AI 能进入 ModelDocument 的唯一受控入口。
     QJsonArray messages_;                  // 完整对话历史：system/user/assistant/tool。
     int currentStep_ = 0;                  // 当前请求已经完成的工具轮数。

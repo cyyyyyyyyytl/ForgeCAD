@@ -18,6 +18,17 @@ AI Tools ───┘          │
 - `FeatureRegistry`：描述可用特征，并创建对应的具体 Feature。
 - `Feature`：保存一个模型对象的参数，通过 `rebuild()` 生成几何形状。
 
+## 依赖图目前的位置
+
+`DependencyGraph` 保存“哪个 Feature 依赖哪个 Feature”的 ID 关系，并由 `ModelDocument`
+拥有。创建特征会登记节点；`addDependency()` 可登记关系并拒绝循环。依赖关系和特征
+一起进入 Undo/Redo 快照。`topologicalOrder()` 把被依赖者排在使用者之前；删除则先预览
+整组受影响的特征，再按相反顺序一次删除，撤销可一次恢复整组。
+
+AI 删除始终弹确认框；普通界面删除会在存在下游特征时弹框，两处都会列出级联范围。
+目前 Box、Cylinder、Sphere 的几何仍各自独立；登记依赖只影响顺序、删除和撤销，
+尚未让一个特征根据另一个特征的几何结果重建。派生几何需要后续特征类型实现。
+
 ## 最重要的公开接口
 
 日常开发先看 `ModelDocument` 的这些方法：

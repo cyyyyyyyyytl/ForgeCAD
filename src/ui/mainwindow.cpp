@@ -16,7 +16,9 @@
 #include <QDialogButtonBox>     // 对话框的 确定/取消 按钮组
 #include <QPushButton>          // 确定/取消 按钮（改中文文字用）
 #include <QDoubleSpinBox>       // 数字输入框
+#include <QMessageBox>          // 级联删除时向用户列出受影响的特征。
 #include <QString>              // 字符串（中文标签/提示用）
+#include <QStringList>          // 将受影响 ID 排版为确认框中的逐行清单。
 #include <QStatusBar>           // 状态栏
 #include <QStandardItemModel>   // 模型树的数据模型（含 QStandardItem）
 #include <QTreeView>            // 模型树控件（clicked 信号）
@@ -174,6 +176,23 @@ void MainWindow::on_actionDeleteFeature_triggered()
     }
 
     try {
+        const auto removal = document_.deletionOrder(selectedFeatureId_);
+        if (removal.size() > 1) {
+            QStringList dependentIds;
+            for (const std::string& id : removal) {
+                if (id != selectedFeatureId_) {
+                    dependentIds.append(QString::fromStdString(id));
+                }
+            }
+            const QString prompt = QStringLiteral("删除 %1 会同时删除以下依赖特征：\n%2\n\n确定继续吗？")
+                                       .arg(QString::fromStdString(selectedFeatureId_),
+                                            dependentIds.join("\n"));
+            if (QMessageBox::question(this, QStringLiteral("确认删除"), prompt,
+                                      QMessageBox::Yes | QMessageBox::No,
+                                      QMessageBox::No) != QMessageBox::Yes) {
+                return;
+            }
+        }
         document_.deleteFeature(selectedFeatureId_);
         // 删除后原选中 ID 已失效；沿用历史刷新策略选择剩余文档的末项，
         // 若删除的是最后一个特征，则同时清空属性面板和三维场景。

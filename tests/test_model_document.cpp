@@ -87,6 +87,77 @@ TEST(ModelDocumentTest, DeleteUndoRestoresFeatureAndOrder)
     EXPECT_EQ(document.findFeature("Sphere001"), nullptr);
 }
 
+// 间接验证快照也保存了依赖图：重做创建后，删除仍能从图里找到该节点。
+TEST(ModelDocumentTest, CreateUndoRedoRestoresDependencyNode)
+{
+    ModelDocument document;
+    document.createFeature("Box", {
+        {"length", 10.0}, {"width", 20.0}, {"height", 30.0},
+    });
+
+    document.undo();
+    EXPECT_EQ(document.findFeature("Box001"), nullptr);
+
+    document.redo();
+    ASSERT_NE(document.findFeature("Box001"), nullptr);
+
+    document.deleteFeature("Box001");
+    EXPECT_EQ(document.findFeature("Box001"), nullptr);
+
+    document.undo();
+    EXPECT_NE(document.findFeature("Box001"), nullptr);
+}
+
+// 删除预览只返回名单；它既不删 Feature，也不新增一条 Undo 历史。
+TEST(ModelDocumentTest, DeletionPreviewDoesNotChangeDocument)
+{
+    ModelDocument document;
+    document.createFeature("Box", {
+        {"length", 10.0}, {"width", 20.0}, {"height", 30.0},
+    });
+
+    EXPECT_EQ(document.deletionOrder("Box001"),
+              (std::vector<std::string>{"Box001"}));
+    EXPECT_NE(document.findFeature("Box001"), nullptr);
+    EXPECT_THROW(document.deletionOrder("missing"), std::invalid_argument);
+
+    document.undo(); // 唯一历史仍是创建 Box；预览没有产生新历史。
+    EXPECT_TRUE(document.features().empty());
+    EXPECT_FALSE(document.canUndo());
+}
+
+// 一条上游依赖删除其全部下游；整个级联操作用一次 Undo/Redo 恢复。
+TEST(ModelDocumentTest, CascadeDeleteAndUndoRestoreDependencies)
+{
+    ModelDocument document;
+    document.createFeature("Box", {
+        {"length", 10.0}, {"width", 20.0}, {"height", 30.0},
+    });
+    document.createFeature("Sphere", {{"radius", 20.0}});
+    document.createFeature("Cylinder", {{"radius", 15.0}, {"height", 40.0}});
+    document.createFeature("Box", {
+        {"length", 5.0}, {"width", 5.0}, {"height", 5.0},
+    }); // Box002 是无关对象，删除后必须保留。
+
+    document.addDependency("Sphere001", "Box001");
+    document.addDependency("Cylinder001", "Sphere001");
+    EXPECT_EQ(document.deletionOrder("Box001"),
+              (std::vector<std::string>{"Cylinder001", "Sphere001", "Box001"}));
+
+    document.deleteFeature("Box001");
+    ASSERT_EQ(document.features().size(), 1u);
+    EXPECT_EQ(document.features()[0]->id(), "Box002");
+
+    document.undo();
+    ASSERT_EQ(document.features().size(), 4u);
+    EXPECT_EQ(document.deletionOrder("Box001"),
+              (std::vector<std::string>{"Cylinder001", "Sphere001", "Box001"}));
+
+    document.redo();
+    ASSERT_EQ(document.features().size(), 1u);
+    EXPECT_EQ(document.features()[0]->id(), "Box002");
+}
+
 // 验证失败操作既不改变模型，也不向 Undo 栈塞入一条虚假的历史。
 TEST(ModelDocumentTest, InvalidOperationDoesNotPolluteHistory)
 {

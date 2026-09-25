@@ -1,8 +1,10 @@
 #include "assistant/AgentController.h" // AgentController 类及其两个成员组件的声明。
+#include "application/ModelDocument.h" // 删除前读取包含所有下游特征的预览名单。
 
 #include <QJsonDocument>   // 在 JSON 对象和网络传输用字节串之间转换。
 #include <QJsonParseError> // 保存 JSON 解析失败的具体状态。
 #include <QMessageBox>    // AI 请求删除时，等待用户在本机确认目标特征。
+#include <QStringList>    // 把级联删除的特征 ID 排版为逐行清单。
 
 namespace forge::assistant {
 
@@ -15,6 +17,7 @@ AgentController::AgentController(application::ModelDocument& document,
     QObject* parent)
     : QObject(parent)   // 把 Controller 加入 Qt 父子对象树，交给 parent 管理生命周期。
     , client_()        // 构造只负责网络通信的 DeepSeekClient 值成员。
+    , document_(document) // 只读查看删除范围，不通过此引用直接修改文档。
     , tools_(document) // 把当前 CAD 文档以非拥有引用注入工具注册表。
 {
     // 系统消息约束模型角色和安全行为：只有工具成功后才能声称已经修改模型。
@@ -146,11 +149,25 @@ void AgentController::handleResponse(const QJsonObject& response)
                 if (!target.value("success").toBool()) {
                     result = target; // 目标不存在时沿用工具错误，不弹没有意义的确认框。
                 } else {
+                    const std::string featureId = id.toStdString();
+                    const auto deletionIds = document_.deletionOrder(featureId);
+                    QStringList dependentIds;
+                    for (const std::string& affectedId : deletionIds) {
+                        if (affectedId != featureId) {
+                            dependentIds.append(QString::fromStdString(affectedId));
+                        }
+                    }
+
+                    QString prompt = QString("确定删除 %1（%2）吗？")
+                                         .arg(id, target.value("type").toString());
+                    if (!dependentIds.isEmpty()) {
+                        prompt += QString("\n\n以下依赖特征也会一起删除：\n%1")
+                                      .arg(dependentIds.join("\n"));
+                    }
                     const auto answer = QMessageBox::question(
                         qobject_cast<QWidget*>(parent()),
                         "确认删除",
-                        QString("确定删除 %1（%2）吗？")
-                            .arg(id, target.value("type").toString()),
+                        prompt,
                         QMessageBox::Yes | QMessageBox::No,
                         QMessageBox::No);
                     if (answer == QMessageBox::Yes) {

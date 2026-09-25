@@ -100,6 +100,30 @@ TEST(ToolRegistryTest, DeletesFeatureAndCanUndo)
     EXPECT_NE(document.findFeature("Sphere001"), nullptr);
 }
 
+// 工具回执列出级联删除的全部 ID，供 AI 如实告知用户实际删除范围。
+TEST(ToolRegistryTest, ReportsAllCascadeDeletedFeatures)
+{
+    ModelDocument document;
+    ToolRegistry registry(document);
+    document.createFeature("Box", {
+        {"length", 10.0}, {"width", 20.0}, {"height", 30.0},
+    });
+    document.createFeature("Sphere", {{"radius", 20.0}});
+    document.addDependency("Sphere001", "Box001");
+
+    const QJsonObject deleted = registry.execute("delete_feature", {{"feature_id", "Box001"}});
+    EXPECT_TRUE(deleted["success"].toBool());
+    const QJsonArray ids = deleted["deleted_feature_ids"].toArray();
+    ASSERT_EQ(ids.size(), 2);
+    EXPECT_EQ(ids[0].toString(), "Sphere001");
+    EXPECT_EQ(ids[1].toString(), "Box001");
+    EXPECT_TRUE(document.features().empty());
+
+    document.undo();
+    EXPECT_NE(document.findFeature("Box001"), nullptr);
+    EXPECT_NE(document.findFeature("Sphere001"), nullptr);
+}
+
 // 非法目标不应删除已有特征，也不应新增一次撤销记录。
 TEST(ToolRegistryTest, RejectsInvalidDeleteWithoutChangingDocument)
 {
