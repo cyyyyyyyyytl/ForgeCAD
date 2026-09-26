@@ -20,6 +20,7 @@ struct ParameterDescriptor {
     double defaultValue;  // 新建对话框的初始值。
     double minimum;       // 允许输入的闭区间下限。
     double maximum;       // 允许输入的闭区间上限。
+    bool optional = false; // 位置可省略并取默认值，已有只提供尺寸的调用保持兼容。
 };
 
 // 一种 Feature 的公共说明，例如 Box 以及它的 length/width/height。

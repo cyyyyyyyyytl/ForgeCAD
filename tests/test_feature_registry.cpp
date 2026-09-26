@@ -13,7 +13,7 @@ TEST(FeatureRegistryTest, DescribesAllSupportedFeatures)
 
     const auto* box = FeatureRegistry::find("Box"); // 借用登记表中的只读 Box 描述。
     ASSERT_NE(box, nullptr);                         // 后续解引用前必须保证查找成功。
-    ASSERT_EQ(box->parameters.size(), 3u);           // Box 必须恰好有长、宽、高。
+    ASSERT_EQ(box->parameters.size(), 6u);           // Box 包含长宽高与三个位置参数。
     EXPECT_EQ(box->parameters[0].name, "length");  // 参数顺序决定构造 values 下标。
     EXPECT_NE(FeatureRegistry::find("Cylinder"), nullptr); // Cylinder 已登记。
     EXPECT_NE(FeatureRegistry::find("Sphere"), nullptr);   // Sphere 已登记。

@@ -39,7 +39,7 @@ public:
     // 对外接口：把多个形状同时显示到 3D 视图里。
     // selectedIndex 表示哪个形状是当前选中项；-1 表示暂时不高亮任何形状。
     // 注意：这里接收的是“形状列表”，Viewport3D 不需要认识 Box/Cylinder 等业务类型。
-    void showShapes(const std::vector<TopoDS_Shape>& shapes, int selectedIndex);
+    void showShapes(const std::vector<TopoDS_Shape>& shapes, int selectedIndex, bool fitAll = true);
 
     // 只更新选择表现，不重新生成或重新显示几何。
     void setSelectedIndex(int selectedIndex);

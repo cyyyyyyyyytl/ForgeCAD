@@ -2,14 +2,16 @@
 
 #include "geometry/ShapeFactory.h" // 封装实际 OCCT 球体创建过程。
 
+#include "domain/PositionParameters.h"
+
 #include <stdexcept> // 未知参数名使用 invalid_argument 报告。
 #include <utility>   // std::move 转移 ID 和 ParameterValue。
 
 namespace forge::domain {
 
-SphereFeature::SphereFeature(std::string id, double radius)
+SphereFeature::SphereFeature(std::string id, double radius, double x, double y, double z)
     : Feature(std::move(id), "Sphere") // 基类保存实例 ID 和固定类型名。
-    , parameters_{{"radius", radius}}  // 即使只有一个参数也沿用统一列表结构。
+    , parameters_{{"radius", radius}, {"x", x}, {"y", y}, {"z", z}}  // 尺寸在前，世界坐标位置在后。
 {
     // 构造允许先形成对象，是否能进入文档由随后 validate 的结果决定。
 }
@@ -22,32 +24,31 @@ const std::vector<Parameter>& SphereFeature::parameters() const
 
 void SphereFeature::setParameter(const std::string& name, ParameterValue value)
 {
-    // 统一按名字修改；即使当前只有一个参数，也保持与其他 Feature 相同的接口。
+    // 统一按名字修改；尺寸和位置沿用其他 Feature 相同的接口。
     for (auto& parameter : parameters_) {
         if (parameter.name() == name) {
-            // 找到 radius 后替换 variant 中的当前值。
+            // 找到具名参数后替换当前值。
             parameter.setValue(std::move(value));
-            return; // 修改成功，不需要继续遍历仅有的一项。
+            return; // 参数名唯一，修改成功后立即返回。
         }
     }
-    // 当前球体只支持 radius，其他名字都属于调用协议错误。
+    // 拒绝未定义的参数名。
     throw std::invalid_argument("Sphere 没有参数: " + name);
 }
 
 std::string SphereFeature::validate() const
 {
-    // radius 是球体成立的领域条件，不能只依赖 UI 输入框范围。
-    if (parameters_[0].asDouble() <= 0.0) {
-        // 球体半径为零或负数会退化，因此返回明确领域错误。
-        return "参数 radius 必须大于 0";
-    }
-    return {}; // 空错误字符串代表球体状态合法。
+    return validatePrimitiveParameters(parameters_);
 }
 
-TopoDS_Shape SphereFeature::rebuild() const
+TopoDS_Shape SphereFeature::rebuild(const std::vector<TopoDS_Shape>&) const
 {
     // 每次按当前半径重新生成 Shape，显示层只接收最终 OCCT 对象。
-    return geometry::ShapeFactory::makeSphere(parameters_[0].asDouble());
+    if (!validate().empty()) return {};
+    // 先在局部坐标系构造，再应用世界坐标平移；布尔运算收到的已经是定位后的形状。
+    return geometry::ShapeFactory::translate(
+        geometry::ShapeFactory::makeSphere(parameters_[0].asDouble()),
+        parameters_[1].asDouble(), parameters_[2].asDouble(), parameters_[3].asDouble());
 }
 
 } // namespace forge::domain

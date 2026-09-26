@@ -92,7 +92,7 @@ QJsonArray ToolRegistry::schemas() const
             objectSchema({{"feature_id", featureIdProperty}}, {"feature_id"})),
         functionTool(
             "create_feature",
-            "创建 Box、Cylinder 或 Sphere。尺寸单位为毫米；parameters 必须使用特征登记的参数名。",
+            "创建 Box、Cylinder 或 Sphere。尺寸和世界坐标位置单位为毫米；可选 x/y/z 默认 0，允许负值。Box 位置为基准角点，Cylinder 为底面圆心，Sphere 为球心；parameters 必须使用特征登记的参数名。",
             objectSchema({
                 {"type", QJsonObject{
                     {"type", "string"},
@@ -100,7 +100,7 @@ QJsonArray ToolRegistry::schemas() const
                 }},
                 {"parameters", QJsonObject{
                     {"type", "object"},
-                    {"description", "具名数值参数，例如 Box 使用 length、width、height。"},
+                    {"description", "具名数值参数：Box 必填 length/width/height，Cylinder 必填 radius/height，Sphere 必填 radius；各类型可选 x/y/z，默认 0。"},
                     {"additionalProperties", QJsonObject{{"type", "number"}}},
                 }},
             }, {"type", "parameters"})),
@@ -148,7 +148,7 @@ QJsonObject ToolRegistry::execute(const QString& toolName, const QJsonObject& ar
 
 // 把领域对象转换成模型容易理解的 JSON 快照。
 // 这里只暴露稳定 ID、类型和数值参数，不把 TopoDS_Shape 或内存地址交给模型。
-QJsonObject ToolRegistry::featureToJson(const domain::Feature& feature) const
+QJsonObject ToolRegistry::featureToJson(const domain::Feature& feature, const core::ShapeResult* knownResult) const
 {
     // Parameter 列表转为具名对象，例如 {"length":100,"width":50}。
     QJsonObject parameters;
@@ -156,11 +156,21 @@ QJsonObject ToolRegistry::featureToJson(const domain::Feature& feature) const
         // JSON 对象以参数名为键、当前数值为值，天然适合模型读取和再次引用。
         parameters.insert(QString::fromStdString(parameter.name()), parameter.asDouble());
     }
+    const core::ShapeResult result = knownResult ? *knownResult : document_.rebuildReport().at(feature.id());
+    const char* state = "failed";
+    switch (result.status) {
+    case core::RebuildStatus::Ready: state = "ready"; break;
+    case core::RebuildStatus::Empty: state = "empty"; break;
+    case core::RebuildStatus::Failed: state = "failed"; break;
+    case core::RebuildStatus::Blocked: state = "blocked"; break;
+    }
     // 统一返回结构能让 list/get/create/set 的结果保持一致。
     return {
         {"feature_id", QString::fromStdString(feature.id())},
         {"type", QString::fromStdString(feature.type())},
         {"parameters", parameters},
+        {"rebuild_status", state},
+        {"rebuild_message", QString::fromStdString(result.message)},
     };
 }
 
@@ -169,9 +179,10 @@ QJsonObject ToolRegistry::listFeatures() const
 {
     // 空文档合法，返回 success=true 和空数组，而不是把“没有模型”当成错误。
     QJsonArray features;
+    const auto report = document_.rebuildReport();
     for (const auto& feature : document_.features()) {
         // unique_ptr 解引用后得到真正的 Feature，再转换为不含指针的 JSON 快照。
-        features.append(featureToJson(*feature));
+        features.append(featureToJson(*feature, &report.at(feature->id())));
     }
     return {
         {"success", true},

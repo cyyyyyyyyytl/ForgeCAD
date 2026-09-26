@@ -8,12 +8,12 @@ namespace forge::domain {
 class BoxFeature final : public Feature {
 public:
     // 构造顺序固定为 length、width、height，与 Registry 的说明保持一致。
-    BoxFeature(std::string id, double length, double width, double height);
+    BoxFeature(std::string id, double length, double width, double height, double x = 0.0, double y = 0.0, double z = 0.0);
 
-    const std::vector<Parameter>& parameters() const override; // 只读返回长、宽、高。
+    const std::vector<Parameter>& parameters() const override; // 只读返回尺寸和位置。
     void setParameter(const std::string& name, ParameterValue value) override; // 按名字修改。
-    std::string validate() const override;   // 检查所有尺寸必须大于零。
-    TopoDS_Shape rebuild() const override;   // 用当前尺寸重新生成 OCCT 长方体。
+    std::string validate() const override;   // 检查正尺寸与有限位置。
+    TopoDS_Shape rebuild(const std::vector<TopoDS_Shape>& inputs = {}) const override; // 基础体暂不使用上游形状。
 
 private:
     // 使用有序 vector，既保持属性面板显示顺序，也便于 rebuild 按固定顺序取值。

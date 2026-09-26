@@ -12,10 +12,19 @@
 
 #include <QVBoxLayout>          // 垂直布局（3D 视图/分组框占满用）
 #include <QFormLayout>          // 表单布局（"标签 + 输入框"一行行排）
+#include <Standard_Failure.hxx>
+#include "infrastructure/StepIO.h"
+#include <QFileInfo>
+#include "domain/ImportedFeature.h"
+#include "domain/PositionParameters.h"
+#include <QFileDialog>
 #include <QDialog>              // 新建对话框
 #include <QDialogButtonBox>     // 对话框的 确定/取消 按钮组
 #include <QPushButton>          // 确定/取消 按钮（改中文文字用）
 #include <QDoubleSpinBox>       // 数字输入框
+#include <QComboBox>            // 按稳定 Feature ID 选择布尔运算的两个输入。
+#include "ui/RebuildFeedback.h"
+#include <QLabel>               // 解释差集的输入顺序。
 #include <QMessageBox>          // 级联删除时向用户列出受影响的特征。
 #include <QString>              // 字符串（中文标签/提示用）
 #include <QStringList>          // 将受影响 ID 排版为确认框中的逐行清单。
@@ -27,6 +36,7 @@
 #include "assistantdialog.h"              // AI 非模态对话框的手写控制类。
 #include "assistant/AgentController.h"    // 对话历史和模型-工具循环协调器。
 #include "domain/Feature.h"               // 读取多态 Feature 参数并调用 rebuild。
+#include "domain/BooleanFeature.h"        // 三个菜单共用同一套布尔特征创建流程。
 #include "domain/FeatureRegistry.h"       // 动态生成新建/属性输入框的参数规则。
 
 #include <vector>               // 保存控件、分类顺序和有效 Shape 列表。
@@ -41,6 +51,9 @@ namespace {
 // ------------------------------------------------------------
 QString paramLabel(const std::string& en)
 {
+    if (en == "x") return QStringLiteral("位置 X");
+    if (en == "y") return QStringLiteral("位置 Y");
+    if (en == "z") return QStringLiteral("位置 Z");
     if (en == "length") return QStringLiteral("长度");
     if (en == "width")  return QStringLiteral("宽度");
     if (en == "height") return QStringLiteral("高度");
@@ -53,9 +66,13 @@ QString paramLabel(const std::string& en)
 // ------------------------------------------------------------
 QString kindLabel(const QString& kind)
 {
+    if (kind == QStringLiteral("Imported")) return QStringLiteral("STEP 导入");
     if (kind == QStringLiteral("Box"))      return QStringLiteral("长方体");
     if (kind == QStringLiteral("Cylinder")) return QStringLiteral("圆柱体");
     if (kind == QStringLiteral("Sphere"))   return QStringLiteral("球体");
+    if (kind == QStringLiteral("Cut"))      return QStringLiteral("差集");
+    if (kind == QStringLiteral("Union"))    return QStringLiteral("并集");
+    if (kind == QStringLiteral("Intersection")) return QStringLiteral("交集");
     return kind;   // 还没加中文名的类型先用原名
 }
 
@@ -146,6 +163,21 @@ void MainWindow::on_actionNewSphere_triggered()
     createFeatureFromDialog(QStringLiteral("Sphere"));
 }
 
+void MainWindow::on_actionBooleanDifference_triggered()
+{
+    createBooleanFeatureFromDialog(forge::domain::BooleanOperation::Difference);
+}
+
+void MainWindow::on_actionBooleanUnion_triggered()
+{
+    createBooleanFeatureFromDialog(forge::domain::BooleanOperation::Union);
+}
+
+void MainWindow::on_actionBooleanIntersection_triggered()
+{
+    createBooleanFeatureFromDialog(forge::domain::BooleanOperation::Intersection);
+}
+
 void MainWindow::on_actionUndo_triggered()
 {
     if (!document_.canUndo()) {
@@ -206,6 +238,73 @@ void MainWindow::on_actionDeleteFeature_triggered()
 // ============================================================
 // createFeatureFromDialog：弹对话框 → 造特征 → 追加进集合并选中
 // ============================================================
+void MainWindow::createBooleanFeatureFromDialog(forge::domain::BooleanOperation operation)
+{
+    const auto& features = document_.features();
+    if (features.size() < 2) {
+        QMessageBox::information(this, QStringLiteral("布尔运算"),
+                                 QStringLiteral("请先创建至少两个特征。"));
+        return;
+    }
+
+    QString title;
+    switch (operation) {
+    case forge::domain::BooleanOperation::Difference: title = QStringLiteral("差集"); break;
+    case forge::domain::BooleanOperation::Union: title = QStringLiteral("并集"); break;
+    case forge::domain::BooleanOperation::Intersection: title = QStringLiteral("交集"); break;
+    }
+
+    QDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("booleanFeatureDialog"));
+    dialog.setWindowTitle(title);
+    auto* form = new QFormLayout(&dialog);
+    auto* base = new QComboBox(&dialog);
+    auto* tool = new QComboBox(&dialog);
+    base->setObjectName(QStringLiteral("booleanBaseCombo"));
+    tool->setObjectName(QStringLiteral("booleanToolCombo"));
+
+    // 显示中文类型，itemData 保存稳定 ID；创建时不依赖文本或容器下标。
+    for (const auto& feature : features) {
+        const QString id = QString::fromStdString(feature->id());
+        const QString label = id + QStringLiteral(" · ")
+            + kindLabel(QString::fromStdString(feature->type()));
+        base->addItem(label, id);
+        tool->addItem(label, id);
+    }
+    const int selected = base->findData(QString::fromStdString(selectedFeatureId_));
+    base->setCurrentIndex(selected >= 0 ? selected : 0);
+    tool->setCurrentIndex(base->currentIndex() == 0 ? 1 : 0);
+    form->addRow(QStringLiteral("主体"), base);
+    form->addRow(QStringLiteral("工具形状"), tool);
+    if (operation == forge::domain::BooleanOperation::Difference) {
+        form->addRow(new QLabel(QStringLiteral("结果 = 主体 − 工具形状"), &dialog));
+    }
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    auto updateConfirmation = [base, tool, buttons]() {
+        buttons->button(QDialogButtonBox::Ok)->setEnabled(base->currentData() != tool->currentData());
+    };
+    connect(base, qOverload<int>(&QComboBox::currentIndexChanged), &dialog, updateConfirmation);
+    connect(tool, qOverload<int>(&QComboBox::currentIndexChanged), &dialog, updateConfirmation);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    form->addRow(buttons);
+    updateConfirmation();
+
+    if (dialog.exec() != QDialog::Accepted) return;
+    try {
+        auto& feature = document_.createBooleanFeature(
+            operation, base->currentData().toString().toStdString(),
+            tool->currentData().toString().toStdString());
+        selectedFeatureId_ = feature.id();
+        refreshAfterHistoryChange(); // 同步树、属性面板和只显示最终结果的视图。
+    } catch (const std::exception& e) {
+        QMessageBox::warning(this, QStringLiteral("创建失败"), QString::fromUtf8(e.what()));
+    }
+}
+
 void MainWindow::createFeatureFromDialog(const QString& type)
 {
     // ① 取出该类型要哪些参数（没有 → 类型不受支持，直接返回）
@@ -220,12 +319,19 @@ void MainWindow::createFeatureFromDialog(const QString& type)
 
     for (const auto& parameter : descriptor->parameters) {
         auto* spin = new QDoubleSpinBox(&dlg); // dlg 作为父对象自动管理输入框。
+        spin->setObjectName(QString::fromStdString(parameter.name));
         spin->setRange(parameter.minimum, parameter.maximum); // 套用 Registry 统一范围。
-        spin->setDecimals(1); // 当前尺寸界面显示并允许一位小数。
+        spin->setDecimals(3);
+        spin->setSuffix(QStringLiteral(" mm")); // 尺寸与位置统一显示毫米和三位小数。
         spin->setValue(parameter.defaultValue); // 使用 Descriptor 的默认创建值。
         form->addRow(paramLabel(parameter.name), spin); // 一行加入中文标签和输入框。
         spins.push_back(spin); // 保留与 Descriptor 相同的顺序，确定后读取数值。
     }
+
+    const QString reference = type == "Box" ? QStringLiteral("基准角点")
+        : type == "Cylinder" ? QStringLiteral("底面圆心") : QStringLiteral("球心");
+    form->addRow(new QLabel(QStringLiteral("位置为世界坐标系中的%1，单位毫米。坐标轴方向保持不变。")
+                           .arg(reference), &dlg));
 
     // ③ 底部放 确定/取消 按钮组，并把按钮文字改成中文
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok
@@ -317,6 +423,7 @@ void MainWindow::rebuildFeatureTree()
     // 空文档或没有有效选择时，禁用 Designer 中的删除 Action。
     ui->actionDeleteFeature->setEnabled(
         document_.findFeature(selectedFeatureId_) != nullptr);
+    updateRebuildFeedback(); // 选择联动重建树时，也保留已计算的状态和颜色。
 }
 
 // ============================================================
@@ -346,6 +453,7 @@ void MainWindow::selectFeature(const std::string& id)
             .arg(viewportFeatureIds_.size())
             .arg(QString::fromStdString(feature->type()),
                  QString::fromStdString(feature->id())));
+    updateRebuildFeedback();
 }
 
 // ============================================================
@@ -354,6 +462,7 @@ void MainWindow::selectFeature(const std::string& id)
 void MainWindow::rebuildParamPanel()
 {
     // ① 先清掉容器里上一次的输入框（布局和控件都要删）
+    rebuildStatusLabel_ = nullptr; // 旧控件稍后释放，不继续保留借用指针。
     QLayout* oldLayout = ui->paramPanelContainer->layout(); // 可能为空或属于上次选择。
     if (oldLayout) {
         QLayoutItem* item;
@@ -379,7 +488,8 @@ void MainWindow::rebuildParamPanel()
 
     for (const auto& p : params) {
         auto* spin = new QDoubleSpinBox(ui->paramPanelContainer); // 父容器管理生命周期。
-        spin->setDecimals(1); // 与新建对话框保持一致的尺寸精度。
+        spin->setDecimals(3);
+        spin->setSuffix(QStringLiteral(" mm")); // 与新建对话框保持一致的尺寸精度。
         // 键盘输入“50”时，默认会先为字符“5”发出一次 valueChanged，
         // 再为最终值“50”发出第二次，导致 Undo 历史记录两个中间状态。
         // 关闭 keyboardTracking 后，键盘编辑只在回车或失去焦点时提交最终值；
@@ -389,8 +499,12 @@ void MainWindow::rebuildParamPanel()
                 feature->type(), p.name())) {
             spin->setRange(descriptor->minimum, descriptor->maximum);
         }
+        spin->setObjectName(QString::fromStdString(p.name()));
         spin->setValue(p.asDouble());         // 初值 = 模型当前值
-        form->addRow(paramLabel(p.name()), spin); // 将中文标签和输入框加入当前表单。
+        const bool imported = dynamic_cast<const forge::domain::ImportedFeature*>(feature) != nullptr;
+        const QString label = imported && forge::domain::isPositionParameter(p.name())
+            ? QStringLiteral("平移 %1").arg(QString::fromStdString(p.name()).toUpper()) : paramLabel(p.name());
+        form->addRow(label, spin); // 导入位置是额外平移，避免被误认为原始几何基准点。
 
         // ★ 动态控件没有固定的 on_ 名字 → 手动 connect（lambda 捕获参数名）。
         //   箭头调整会立即提交；键盘输入则在编辑完成后只提交最终数值。
@@ -398,24 +512,37 @@ void MainWindow::rebuildParamPanel()
                 [this, featureId, paramName = p.name()](double v) {
                     try {
                         document_.setParameter(featureId, paramName, v);
-                        refreshViewport(); // Document 修改成功后重建所有有效几何。
+                        refreshViewport(false); // 保持观察视角，便于判断位置和尺寸的变化。
                     } catch (const std::invalid_argument& e) {
                         statusBar()->showMessage(
                             QStringLiteral("修改失败: %1").arg(e.what()));
                     }
                 });
     }
+    rebuildStatusLabel_ = new QLabel(ui->paramPanelContainer);
+    rebuildStatusLabel_->setObjectName(QStringLiteral("rebuildStatusLabel"));
+    rebuildStatusLabel_->setWordWrap(true);
+    rebuildStatusLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    if (const auto* imported = dynamic_cast<const forge::domain::ImportedFeature*>(feature)) {
+        auto* info = new QLabel(QStringLiteral("来源：%1\n位置为相对文件原始几何的平移；原始尺寸由 STEP 几何决定。")
+            .arg(QString::fromStdString(imported->sourceName())), ui->paramPanelContainer);
+        info->setTextFormat(Qt::PlainText);
+        info->setWordWrap(true);
+        form->addRow(info);
+    }
+    form->addRow(QStringLiteral("重建状态"), rebuildStatusLabel_);
+    updateRebuildFeedback();
+
 }
 
 // ============================================================
 // refreshViewport：重建全部形状 → 同时显示 → 高亮选中项 → 状态栏汇报
 // ============================================================
-void MainWindow::refreshViewport()
+void MainWindow::refreshViewport(bool fitAll)
 {
     if (!viewport_) return;                                      // 3D 视图还没就绪（启动早期）
-    if (!document_.findFeature(selectedFeatureId_)) return;
 
-    // ① 依次重建仓库里的所有 Feature。
+    // ① 文档按依赖顺序重建全部几何，视图只绘制未被布尔运算使用的结果。
     // validShapes 只收集成功生成的形状；selectedShapeIndex 记录当前选中项
     // 在“有效形状列表”里的位置，随后交给 Viewport3D 做高亮。
     std::vector<TopoDS_Shape> validShapes;
@@ -424,30 +551,26 @@ void MainWindow::refreshViewport()
     validShapes.reserve(features.size()); // 最多每个 Feature 产生一个 Shape。
     viewportFeatureIds_.reserve(features.size()); // 映射项数上限相同。
     int selectedShapeIndex = -1;
-
-    for (int i = 0; i < static_cast<int>(features.size()); ++i) {
-        TopoDS_Shape shape = features[i]->rebuild();  // 多态：三种 Feature 用同一个调用方式
-        if (shape.IsNull()) {
+    rebuildReport_ = document_.rebuildReport();
+    for (const auto& featureId : document_.visibleFeatureIds(rebuildReport_)) {
+        const auto& result = rebuildReport_.at(featureId);
+        TopoDS_Shape shape = result.shape;
+        if (result.status != forge::core::RebuildStatus::Ready || shape.IsNull()) {
             continue;                                  // 生成失败的空形状不交给显示层
         }
 
-        if (features[i]->id() == selectedFeatureId_) {
+        if (featureId == selectedFeatureId_) {
             selectedShapeIndex = static_cast<int>(validShapes.size());
         }
         validShapes.push_back(shape); // 仅把非空 OCCT Shape 交给显示层。
-        viewportFeatureIds_.push_back(features[i]->id()); // 同步记录同位置 Feature ID。
+        viewportFeatureIds_.push_back(featureId); // 同步记录同位置 Feature ID。
     }
 
     // ② Viewport3D 只认识 TopoDS_Shape，不认识 Feature：继续保持业务与显示解耦。
-    viewport_->showShapes(validShapes, selectedShapeIndex);
+    viewport_->showShapes(validShapes, selectedShapeIndex, fitAll);
 
-    // ③ 状态栏告诉用户当前选中谁，以及成功显示了多少个形状。
-    statusBar()->showMessage(
-        QStringLiteral("共 %1 个特征 · 已显示 %2 个 · 当前: %3 (%4)")
-            .arg(features.size())
-            .arg(validShapes.size())
-            .arg(QString::fromStdString(document_.findFeature(selectedFeatureId_)->type()),
-                 QString::fromStdString(selectedFeatureId_)));
+    updateRebuildFeedback();
+
 }
 
 // ============================================================
@@ -471,12 +594,49 @@ void MainWindow::refreshAfterHistoryChange()
         if (viewport_) {
             viewport_->showShapes({}, -1);
         }
+        rebuildReport_.clear();
         viewportFeatureIds_.clear(); // 场景为空时映射也必须为空，防止旧下标残留。
         statusBar()->showMessage(QStringLiteral("文档为空"));
         return;
     }
 
     refreshViewport();
+}
+
+void MainWindow::updateRebuildFeedback()
+{
+    using forge::core::RebuildStatus;
+    // 只更新树的数据，不重建属性控件，避免打断正在进行的参数编辑。
+    int failures = 0, empty = 0;
+    for (int row = 0; row < treeModel_->rowCount(); ++row) {
+        auto* category = treeModel_->item(row);
+        for (int childRow = 0; childRow < category->rowCount(); ++childRow) {
+            auto* item = category->child(childRow);
+            const QString id = item->data(Qt::UserRole).toString();
+            const auto found = rebuildReport_.find(id.toStdString());
+            if (found == rebuildReport_.end()) continue;
+            const auto& result = found->second;
+            const bool failed = !result.usable();
+            failures += failed;
+            empty += result.status == RebuildStatus::Empty;
+            forge::ui::decorateRebuildItem(*item, id, result);
+        }
+    }
+    const auto selected = rebuildReport_.find(selectedFeatureId_);
+    QString selectedMessage;
+    if (selected != rebuildReport_.end()) {
+        selectedMessage = forge::ui::rebuildStatusLabel(selected->second.status) + "：" + QString::fromStdString(selected->second.message);
+        if (rebuildStatusLabel_) {
+            rebuildStatusLabel_->setText(selectedMessage);
+            rebuildStatusLabel_->setStyleSheet(!selected->second.usable() ? "color: #be2d2d;" : "");
+        }
+    } else if (rebuildStatusLabel_) {
+        rebuildStatusLabel_->setText(QStringLiteral("尚未计算"));
+    }
+    statusBar()->showMessage(QStringLiteral("共 %1 个特征 · 显示 %2 个 · 失败 %3 个 · 空结果 %4 个%5")
+        .arg(document_.features().size()).arg(viewportFeatureIds_.size()).arg(failures).arg(empty)
+        .arg(selectedMessage.isEmpty() ? QString() : QStringLiteral(" · %1：%2")
+            .arg(QString::fromStdString(selectedFeatureId_), selectedMessage)));
 }
 
 void MainWindow::setupAssistantDialog()
@@ -530,4 +690,71 @@ void MainWindow::setupAssistantDialog()
                 rebuildParamPanel();
                 refreshViewport();
             });
+}
+
+
+void MainWindow::on_actionExportStep_triggered()
+{
+    try {
+        // 收集策略属于文档层；UI 不推断依赖，也不导出失败时展开的诊断形状。
+        const auto geometry = document_.shapeForExport();
+        if (geometry.status != forge::core::RebuildStatus::Ready) {
+            QMessageBox::warning(this, QStringLiteral("无法导出 STEP"),
+                QString::fromStdString(geometry.message));
+            return;
+        }
+
+        QFileDialog dialog(this, QStringLiteral("导出 STEP"));
+        dialog.setObjectName(QStringLiteral("stepExportDialog"));
+        dialog.setAcceptMode(QFileDialog::AcceptSave);
+        dialog.setFileMode(QFileDialog::AnyFile);
+        dialog.setNameFilter(QStringLiteral("STEP 文件 (*.step *.stp)"));
+        dialog.setDefaultSuffix(QStringLiteral("step"));
+        dialog.selectFile(QStringLiteral("model.step"));
+        if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) return;
+
+        const QString path = dialog.selectedFiles().first();
+        const auto result = forge::infrastructure::StepIO::exportShape(geometry.shape, path);
+        if (!result.success) {
+            QMessageBox::warning(this, QStringLiteral("STEP 导出失败"), result.error);
+            return;
+        }
+        // 导出不改动文档或 Undo/Redo，也不刷新相机、选择和属性面板。
+        statusBar()->showMessage(QStringLiteral("STEP 导出成功：%1 · %2")
+            .arg(path, QString::fromStdString(geometry.message)));
+    } catch (const Standard_Failure& error) {
+        QMessageBox::warning(this, QStringLiteral("STEP 导出失败"),
+            QString::fromUtf8(error.GetMessageString() ? error.GetMessageString() : "几何内核异常"));
+    } catch (const std::exception& error) {
+        QMessageBox::warning(this, QStringLiteral("STEP 导出失败"), QString::fromUtf8(error.what()));
+    }
+}
+
+
+void MainWindow::on_actionImportStep_triggered()
+{
+    QFileDialog dialog(this, QStringLiteral("导入 STEP"));
+    dialog.setObjectName(QStringLiteral("stepImportDialog"));
+    dialog.setAcceptMode(QFileDialog::AcceptOpen);
+    dialog.setFileMode(QFileDialog::ExistingFile);
+    dialog.setNameFilter(QStringLiteral("STEP 文件 (*.step *.stp);;所有文件 (*)"));
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) return;
+    const QString path = dialog.selectedFiles().first();
+    const auto result = forge::infrastructure::StepIO::importShape(path);
+    if (!result.success) {
+        QMessageBox::warning(this, QStringLiteral("STEP 导入失败"), result.error);
+        return;
+    }
+    try {
+        auto& feature = document_.createImportedFeature(result.shape, QFileInfo(path).fileName().toStdString());
+        selectedFeatureId_ = feature.id();
+        refreshAfterHistoryChange();
+        statusBar()->showMessage(QStringLiteral("STEP 导入成功：%1 · %2")
+            .arg(path, QString::fromStdString(selectedFeatureId_)));
+    } catch (const Standard_Failure& error) {
+        QMessageBox::warning(this, QStringLiteral("STEP 导入失败"),
+            QString::fromUtf8(error.GetMessageString() ? error.GetMessageString() : "几何内核异常"));
+    } catch (const std::exception& error) {
+        QMessageBox::warning(this, QStringLiteral("STEP 导入失败"), QString::fromUtf8(error.what()));
+    }
 }

@@ -4,15 +4,15 @@
 
 namespace forge::domain {
 
-// 一个实际球体对象；当前只有 radius 一个参数。
+// 一个实际球体对象；半径和球心位置构成它的实例参数。
 class SphereFeature final : public Feature {
 public:
-    SphereFeature(std::string id, double radius); // 保存实例 ID 和初始半径。
+    SphereFeature(std::string id, double radius, double x = 0.0, double y = 0.0, double z = 0.0); // 保存实例 ID 和初始半径。
 
-    const std::vector<Parameter>& parameters() const override; // 只读返回半径列表。
-    void setParameter(const std::string& name, ParameterValue value) override; // 修改半径。
-    std::string validate() const override; // 半径大于零时返回空错误字符串。
-    TopoDS_Shape rebuild() const override; // 按当前半径生成 OCCT 球体。
+    const std::vector<Parameter>& parameters() const override; // 只读返回半径和位置。
+    void setParameter(const std::string& name, ParameterValue value) override; // 修改尺寸或位置。
+    std::string validate() const override; // 检查正半径与有限位置。
+    TopoDS_Shape rebuild(const std::vector<TopoDS_Shape>& inputs = {}) const override; // 基础体暂不使用上游形状。
 
 private:
     // 仍使用与其他 Feature 相同的参数容器，调用方无需为球体写特殊分支。

@@ -27,11 +27,11 @@ TEST(BoxFeatureTest, ConstructorSetsIdAndName) {
 // ------------------------------------------------------------
 // ② 参数列表测试
 // ------------------------------------------------------------
-// 目标：parameters() 必须返回 3 个参数，名字按 length/width/height 顺序
+// 目标：parameters() 返回尺寸与位置，前三项按 length/width/height 顺序
 TEST(BoxFeatureTest, ParametersReturnsLengthWidthHeight) {
     BoxFeature box("Box002", 10, 20, 30);    // 注意构造顺序：length=10, width=20, height=30
     const auto& params = box.parameters();   // 拿到参数列表（const 引用，不拷贝）
-    ASSERT_EQ(params.size(), 3);             // 断言：必须有 3 个参数
+    ASSERT_EQ(params.size(), 6u);             // 断言：三个尺寸与三个位置参数
                                              //  （ASSERT_EQ 失败=直接停；EXPECT_EQ 失败=继续跑）
     EXPECT_EQ(params[0].name(), "length");   // 第 0 个叫 length
     EXPECT_EQ(params[1].name(), "width");    // 第 1 个叫 width

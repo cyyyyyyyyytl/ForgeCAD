@@ -2,6 +2,8 @@
 
 #include "geometry/ShapeFactory.h" // 把合法尺寸转换为真正的 OCCT 长方体。
 
+#include "domain/PositionParameters.h"
+
 #include <stdexcept> // 未知参数名使用 invalid_argument 明确拒绝。
 #include <utility>   // std::move 转移 ID 和 ParameterValue 内部资源。
 
@@ -11,12 +13,12 @@ BoxFeature::BoxFeature(
     std::string id,
     double length,
     double width,
-    double height)
+    double height, double x, double y, double z)
     : Feature(std::move(id), "Box") // 公共基类保存实例 ID 和固定类型名 Box。
     , parameters_{                   // 参数顺序与 Registry 描述、rebuild 下标完全一致。
           {"length", length},
           {"width", width},
-          {"height", height}}
+          {"height", height}, {"x", x}, {"y", y}, {"z", z}}
 {
     // 参数合法性由调用方通过 validate 检查；构造本身只建立对象状态。
 }
@@ -43,23 +45,17 @@ void BoxFeature::setParameter(const std::string& name, ParameterValue value)
 
 std::string BoxFeature::validate() const
 {
-    // 这里保护 Box 自身永远不能拥有非正尺寸，与 UI/AI 来源无关。
-    for (const auto& parameter : parameters_) {
-        if (parameter.asDouble() <= 0.0) {
-            // 返回第一个发现的错误即可；调用方会把文字显示给用户或模型。
-            return "参数 " + parameter.name() + " 必须大于 0";
-        }
-    }
-    return {}; // 空 std::string 是项目约定的“全部校验通过”。
+    return validatePrimitiveParameters(parameters_);
 }
 
-TopoDS_Shape BoxFeature::rebuild() const
+TopoDS_Shape BoxFeature::rebuild(const std::vector<TopoDS_Shape>&) const
 {
     // Feature 只组织参数，真正调用 OCCT 的细节集中在 geometry::ShapeFactory。
-    return geometry::ShapeFactory::makeBox(
-        parameters_[0].asDouble(),
-        parameters_[1].asDouble(),
-        parameters_[2].asDouble());
+    if (!validate().empty()) return {};
+    // 先在局部坐标系构造，再应用世界坐标平移；布尔运算收到的已经是定位后的形状。
+    return geometry::ShapeFactory::translate(
+        geometry::ShapeFactory::makeBox(parameters_[0].asDouble(), parameters_[1].asDouble(), parameters_[2].asDouble()),
+        parameters_[3].asDouble(), parameters_[4].asDouble(), parameters_[5].asDouble());
 }
 
 } // namespace forge::domain

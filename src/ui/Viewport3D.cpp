@@ -160,7 +160,7 @@ void Viewport3D::initViewer()
 // ============================================================
 // 同时显示多个形状，并高亮当前选中的一个
 // ============================================================
-void Viewport3D::showShapes(const std::vector<TopoDS_Shape>& shapes, int selectedIndex)
+void Viewport3D::showShapes(const std::vector<TopoDS_Shape>& shapes, int selectedIndex, bool fitAll)
 {
     if (!context_) { diagLog("showShapes: context_ is NULL!"); return; }
     if (!view_)    { diagLog("showShapes: view_ is NULL!"); return; }
@@ -206,7 +206,7 @@ void Viewport3D::showShapes(const std::vector<TopoDS_Shape>& shapes, int selecte
     setSelectedIndex(selectedIndex);
 
     diagLog("showShapes: displayed " + std::to_string(displayedShapes_.size()) + " shapes");
-    view_->FitAll(); // 调整相机，使全部新对象进入视野。
+    if (fitAll) view_->FitAll(); // 参数编辑保持相机；创建时适配全部对象。
     view_->Redraw();
     diagLog("FitAll + Redraw done");
 }

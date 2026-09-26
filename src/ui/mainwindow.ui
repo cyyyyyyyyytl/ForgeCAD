@@ -91,8 +91,25 @@
     <addaction name="actionRedo"/>
     <addaction name="actionDeleteFeature"/>
    </widget>
+   <widget class="QMenu" name="menu_2">
+    <property name="title">
+     <string>布尔运算</string>
+    </property>
+    <addaction name="actionBooleanDifference"/>
+    <addaction name="actionBooleanUnion"/>
+    <addaction name="actionBooleanIntersection"/>
+   </widget>
+   <widget class="QMenu" name="menuFile">
+    <property name="title">
+     <string>文件</string>
+    </property>
+    <addaction name="actionExportStep"/>
+    <addaction name="actionImportStep"/>
+   </widget>
+   <addaction name="menuFile"/>
    <addaction name="menu"/>
    <addaction name="menuEdit"/>
+   <addaction name="menu_2"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
   <widget class="QToolBar" name="toolBar">
@@ -182,6 +199,31 @@
    </property>
    <property name="menuRole">
     <enum>QAction::MenuRole::NoRole</enum>
+   </property>
+  </action>
+  <action name="actionBooleanDifference">
+   <property name="text">
+    <string>差集</string>
+   </property>
+  </action>
+  <action name="actionBooleanUnion">
+   <property name="text">
+    <string>并集</string>
+   </property>
+  </action>
+  <action name="actionBooleanIntersection">
+   <property name="text">
+    <string>交集</string>
+   </property>
+  </action>
+  <action name="actionExportStep">
+   <property name="text">
+    <string>导出 STEP…</string>
+   </property>
+  </action>
+  <action name="actionImportStep">
+   <property name="text">
+    <string>导入 STEP…</string>
    </property>
   </action>
  </widget>

@@ -1,7 +1,11 @@
 #include <gtest/gtest.h> // GoogleTest 的 TEST、EXPECT_* 和 ASSERT_* 宏。
 
 #include "application/ModelDocument.h" // 本文件直接验证的文档 API。
+#include "domain/BooleanFeature.h"     // 布尔创建测试使用运算枚举。
 #include "domain/Feature.h"             // 断言需要读取查找到的 Feature 参数。
+
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
 
 using forge::application::ModelDocument; // 缩短测试代码中的完整命名空间前缀。
 
@@ -18,7 +22,176 @@ double parameterValue(const ModelDocument& document,
     return feature ? feature->parameters().at(index).asDouble() : 0.0;
 }
 
+double shapeVolume(const TopoDS_Shape& shape)
+{
+    GProp_GProps properties;
+    BRepGProp::VolumeProperties(shape, properties);
+    return properties.Mass();
+}
+
 } // namespace
+
+TEST(ModelDocumentTest, RebuildShapesTracksDocumentChanges)
+{
+    ModelDocument document;
+    EXPECT_TRUE(document.rebuildShapes().empty());
+
+    document.createFeature("Box", {
+        {"length", 10.0}, {"width", 10.0}, {"height", 10.0},
+    });
+    document.createFeature("Cylinder", {
+        {"radius", 2.0}, {"height", 10.0},
+    });
+    document.addDependency("Cylinder001", "Box001");
+
+    const auto initial = document.rebuildShapes();
+    ASSERT_EQ(initial.size(), 2u);
+    ASSERT_FALSE(initial.at("Box001").IsNull());
+    ASSERT_FALSE(initial.at("Cylinder001").IsNull());
+
+    GProp_GProps originalProperties;
+    BRepGProp::VolumeProperties(initial.at("Box001"), originalProperties);
+    EXPECT_NEAR(originalProperties.Mass(), 1000.0, 1e-5);
+
+    document.setParameter("Box001", "length", 12.0);
+    const auto changed = document.rebuildShapes();
+    GProp_GProps changedProperties;
+    BRepGProp::VolumeProperties(changed.at("Box001"), changedProperties);
+    EXPECT_NEAR(changedProperties.Mass(), 1200.0, 1e-5);
+
+    document.undo();
+    const auto restored = document.rebuildShapes();
+    GProp_GProps restoredProperties;
+    BRepGProp::VolumeProperties(restored.at("Box001"), restoredProperties);
+    EXPECT_NEAR(restoredProperties.Mass(), 1000.0, 1e-5);
+
+    document.deleteFeature("Box001");
+    EXPECT_TRUE(document.rebuildShapes().empty());
+}
+
+TEST(ModelDocumentTest, BooleanFeatureUsesInputsAndSurvivesHistory)
+{
+    ModelDocument document;
+    document.createFeature("Box", {
+        {"length", 10.0}, {"width", 10.0}, {"height", 10.0},
+    });
+    document.createFeature("Box", {
+        {"length", 5.0}, {"width", 5.0}, {"height", 5.0},
+    });
+
+    auto& cut = document.createBooleanFeature(
+        forge::domain::BooleanOperation::Difference, "Box001", "Box002");
+    EXPECT_EQ(cut.id(), "Cut001");
+    EXPECT_EQ(cut.type(), "Cut");
+    const auto initial = document.rebuildShapes();
+    ASSERT_FALSE(initial.at("Cut001").IsNull());
+    EXPECT_NEAR(shapeVolume(initial.at("Cut001")), 875.0, 1e-5);
+
+    document.setParameter("Box002", "length", 4.0);
+    EXPECT_NEAR(shapeVolume(document.rebuildShapes().at("Cut001")), 900.0, 1e-5);
+
+    document.undo(); // 撤销工具形状的尺寸修改。
+    EXPECT_NEAR(shapeVolume(document.rebuildShapes().at("Cut001")), 875.0, 1e-5);
+    document.undo(); // 一次撤销就移除布尔特征和两条依赖。
+    EXPECT_EQ(document.findFeature("Cut001"), nullptr);
+    document.redo();
+    ASSERT_NE(document.findFeature("Cut001"), nullptr);
+    EXPECT_NEAR(shapeVolume(document.rebuildShapes().at("Cut001")), 875.0, 1e-5);
+
+    document.deleteFeature("Box001");
+    EXPECT_EQ(document.findFeature("Cut001"), nullptr);
+    EXPECT_NE(document.findFeature("Box002"), nullptr);
+}
+
+TEST(ModelDocumentTest, BooleanCreationRejectsInvalidInputsWithoutHistory)
+{
+    ModelDocument document;
+    document.createFeature("Box", {
+        {"length", 10.0}, {"width", 10.0}, {"height", 10.0},
+    });
+
+    EXPECT_THROW(document.createBooleanFeature(
+        forge::domain::BooleanOperation::Difference, "Box001", "Box001"),
+        std::invalid_argument);
+    EXPECT_THROW(document.createBooleanFeature(
+        forge::domain::BooleanOperation::Union, "Box001", "missing"),
+        std::invalid_argument);
+    EXPECT_EQ(document.features().size(), 1u);
+    document.undo(); // 失败创建不增加历史，所以撤销的是最初的 Box。
+    EXPECT_TRUE(document.features().empty());
+}
+
+TEST(ModelDocumentTest, UnionAndIntersectionRestoreWithTheirDependencies)
+{
+    ModelDocument document;
+    document.createFeature("Box", {
+        {"length", 10.0}, {"width", 10.0}, {"height", 10.0},
+    });
+    document.createFeature("Box", {
+        {"length", 5.0}, {"width", 5.0}, {"height", 5.0},
+    });
+
+    document.createBooleanFeature(
+        forge::domain::BooleanOperation::Union, "Box001", "Box002");
+    document.createBooleanFeature(
+        forge::domain::BooleanOperation::Intersection, "Box001", "Box002");
+    EXPECT_THROW(document.addDependency("Union001", "Intersection001"),
+                 std::invalid_argument);
+
+    document.undo(); // 撤销交集创建。
+    EXPECT_EQ(document.findFeature("Intersection001"), nullptr);
+    document.redo(); // 重新从快照恢复交集类型及其两条依赖。
+
+    const auto shapes = document.rebuildShapes();
+    ASSERT_FALSE(shapes.at("Union001").IsNull());
+    ASSERT_FALSE(shapes.at("Intersection001").IsNull());
+    EXPECT_NEAR(shapeVolume(shapes.at("Union001")), 1000.0, 1e-5);
+    EXPECT_NEAR(shapeVolume(shapes.at("Intersection001")), 125.0, 1e-5);
+}
+
+TEST(ModelDocumentTest, VisibilityFollowsBooleanChainAndUndo)
+{
+    ModelDocument document;
+    EXPECT_TRUE(document.visibleFeatureIds().empty());
+    for (int i = 0; i < 3; ++i) {
+        document.createFeature("Box", {
+            {"length", 10.0}, {"width", 10.0}, {"height", 10.0},
+        });
+    }
+    document.createFeature("Sphere", {{"radius", 2.0}}); // 无关形状保持可见。
+    document.createBooleanFeature(
+        forge::domain::BooleanOperation::Union, "Box001", "Box002");
+    EXPECT_EQ(document.visibleFeatureIds(),
+              (std::vector<std::string>{"Box003", "Sphere001", "Union001"}));
+
+    document.createBooleanFeature(
+        forge::domain::BooleanOperation::Intersection, "Union001", "Box003");
+    EXPECT_EQ(document.visibleFeatureIds(),
+              (std::vector<std::string>{"Sphere001", "Intersection001"}));
+    EXPECT_EQ(document.features().size(), 6u); // 隐藏只影响显示，不删除模型。
+
+    document.undo();
+    EXPECT_EQ(document.visibleFeatureIds(),
+              (std::vector<std::string>{"Box003", "Sphere001", "Union001"}));
+    document.redo();
+    EXPECT_EQ(document.visibleFeatureIds(),
+              (std::vector<std::string>{"Sphere001", "Intersection001"}));
+    document.deleteFeature("Intersection001");
+    EXPECT_EQ(document.visibleFeatureIds(),
+              (std::vector<std::string>{"Box003", "Sphere001", "Union001"}));
+}
+
+TEST(ModelDocumentTest, OrdinaryDependenciesDoNotHideShapes)
+{
+    ModelDocument document;
+    document.createFeature("Box", {
+        {"length", 10.0}, {"width", 10.0}, {"height", 10.0},
+    });
+    document.createFeature("Sphere", {{"radius", 2.0}});
+    document.addDependency("Sphere001", "Box001");
+    EXPECT_EQ(document.visibleFeatureIds(),
+              (std::vector<std::string>{"Box001", "Sphere001"}));
+}
 
 // 验证不同类型各自从 001 编号，同类型继续递增，且文档支持按 ID 查找。
 TEST(ModelDocumentTest, CreatesAndFindsFeaturesWithStableIds)

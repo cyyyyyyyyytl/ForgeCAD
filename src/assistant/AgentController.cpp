@@ -26,6 +26,7 @@ AgentController::AgentController(application::ModelDocument& document,
         {"content",
          "你是 ForgeCAD AI 建模助手。尺寸单位为毫米。"
          "只能使用提供的工具查询或修改模型；工具返回 success=true 后才能声称操作成功。"
+         "工具 success 只表示数据操作成功；应检查 rebuild_status，failed/blocked 不能声称几何生成成功，empty 应解释为空结果。"
          "缺少必要尺寸时先询问用户，不要猜测。"
          "删除操作若被用户取消，不要重试，应告知用户未删除。回答使用简洁中文。"},
     });

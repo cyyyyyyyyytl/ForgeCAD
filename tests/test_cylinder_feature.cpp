@@ -21,11 +21,11 @@ TEST(CylinderFeatureTest, ConstructorSetsIdAndName) {
     EXPECT_EQ(cyl.type(), "Cylinder");   // 子类类型名固定为 Cylinder。
 }
 
-// ② 参数列表测试：恰好 2 个参数，名字 radius/height，顺序与值正确
+// ② 参数列表测试：尺寸 radius/height 在前，位置 x/y/z 在后
 TEST(CylinderFeatureTest, ParametersReturnsRadiusHeight) {
     CylinderFeature cyl("Cyl002", 20.0, 60.0);
     const auto& params = cyl.parameters();        // 只读引用避免复制参数列表。
-    ASSERT_EQ(params.size(), 2);                 // 必须有 2 个参数
+    ASSERT_EQ(params.size(), 5u);                 // 两个尺寸与三个位置参数
     EXPECT_EQ(params[0].name(), "radius");       // 下标 0 固定为半径。
     EXPECT_EQ(params[1].name(), "height");       // 下标 1 固定为高度。
     EXPECT_DOUBLE_EQ(params[0].asDouble(), 20.0); // 半径初始值正确。

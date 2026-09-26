@@ -58,3 +58,4 @@ if(WIN32)
         COMMENT "copy vcpkg DLL"
     )
 endif()
+forgecad_deploy_freetype_runtime(forgecad)

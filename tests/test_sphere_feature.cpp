@@ -2,7 +2,7 @@
 // SphereFeature 单元测试
 // ------------------------------------------------------------
 // 测什么：SphereFeature 的核心行为（与 Box/Cylinder 测试同构）
-//   ① 构造（id / name）  ② 参数列表（只有 radius 一个）
+//   ① 构造（id / name）  ② 参数列表（radius 和球心位置）
 //   ③ 改参数（成功 + 失败抛异常）  ④ 校验（合法 / 非法）
 //   ⑤ 重建（返回真实 3D 形状）
 // 三个特征测试长得一样 = 抽象带来的可预期性：合同一致 → 验收标准一致
@@ -20,12 +20,12 @@ TEST(SphereFeatureTest, ConstructorSetsIdAndName) {
     EXPECT_EQ(sph.type(), "Sphere");    // 类型名由 SphereFeature 固定为 Sphere。
 }
 
-// ② 参数列表测试：恰好 1 个参数，名字 radius
+// ② 参数列表测试：半径在前，球心 x/y/z 在后
 TEST(SphereFeatureTest, ParametersReturnsRadius) {
     SphereFeature sph("Sph002", 20.0);
     const auto& params = sph.parameters(); // const 引用避免复制参数 vector。
-    ASSERT_EQ(params.size(), 1u);            // 球体只有 1 个参数
-    EXPECT_EQ(params[0].name(), "radius");          // 唯一参数的协议名必须正确。
+    ASSERT_EQ(params.size(), 4u);            // 半径与三个球心位置参数
+    EXPECT_EQ(params[0].name(), "radius");          // 半径参数的协议名必须正确。
     EXPECT_DOUBLE_EQ(params[0].asDouble(), 20.0);    // 构造时半径值必须正确保存。
 }
 

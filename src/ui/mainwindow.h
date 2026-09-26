@@ -21,6 +21,7 @@
 #include "application/ModelDocument.h" // MainWindow 以值成员拥有当前 CAD 文档。
 
 class QStandardItemModel;  // 前向声明：树的"数据模型"（放类外=全局类；指针够用，完整定义在 .cpp）
+class QLabel;
 class AssistantDialog; // 这里只保存指针，完整对话框定义留给 .cpp。
 
 namespace Ui {
@@ -42,10 +43,15 @@ public:
     ~MainWindow();                                  // 释放手写 new 的 Ui 包装对象。
 
 private slots:
+    void on_actionImportStep_triggered(); // 用户在 Designer 添加同名 QAction 后自动连接。
+    void on_actionExportStep_triggered(); // 文件菜单导出当前最终几何。
     // 菜单动作 → Qt 按名字约定自动连接（on_<动作名>_triggered）
     void on_actionNewBox_triggered();       // 菜单"新建→长方体"
     void on_actionNewCylinder_triggered();  // 菜单"新建→圆柱体"
     void on_actionNewSphere_triggered();    // 菜单"新建→球体"
+    void on_actionBooleanDifference_triggered();
+    void on_actionBooleanUnion_triggered();
+    void on_actionBooleanIntersection_triggered();
     void on_actionUndo_triggered();         // 编辑→撤销（Ctrl+Z）
     void on_actionRedo_triggered();         // 编辑→重做（Ctrl+Y）
     void on_actionDeleteFeature_triggered();// 编辑→删除选中特征（Del）
@@ -60,15 +66,19 @@ private:
     AssistantDialog* assistantDialog_ = nullptr; // 非模态 AI 对话窗口，重复打开时复用。
     std::string selectedFeatureId_; // 当前树/属性/视口共同选中的稳定对象 ID。
     std::vector<std::string> viewportFeatureIds_; // 对应 Viewport3D 中有效 Shape 的顺序。
+    forge::application::ModelDocument::RebuildReport rebuildReport_;
+    QLabel* rebuildStatusLabel_ = nullptr; // 当前属性面板中的状态说明，由 Qt 管理。
     QStandardItemModel* treeModel_ = nullptr; // QTreeView 展示所需的数据模型。
 
     // ---- 私有工具（入口与动作分离：槽只转发，逻辑集中在这里）----
     void createFeatureFromDialog(const QString& type); // 弹对话框 → 造特征 → 追加进集合
+    void createBooleanFeatureFromDialog(forge::domain::BooleanOperation operation);
     void rebuildFeatureTree();                         // 用 document_ 整树重建（集合变了就调）
     void selectFeature(const std::string& id);         // 按稳定 ID 切换选中项
     void rebuildParamPanel();                          // 按"选中特征"动态重建属性面板
-    void refreshViewport();                            // 选中特征 → 重建形状 → 显示 → 状态栏
+    void refreshViewport(bool fitAll = true);                            // 选中特征 → 重建形状 → 显示 → 状态栏
     void refreshAfterHistoryChange();                  // Undo/Redo 后统一修正选中项并刷新 UI
+    void updateRebuildFeedback();
     void setupAssistantDialog();                       // 连接 Designer AI 窗口与 Agent
 };
 

@@ -1,5 +1,6 @@
 #pragma once // 防止头文件被同一个翻译单元重复包含。
 
+#include "core/ShapeResult.h"
 #include <QJsonArray>  // schemas() 返回一组可提供给模型的工具描述。
 #include <QJsonObject> // 工具参数和执行结果都使用 JSON 对象承载。
 #include <QString>     // 工具名和 JSON 字符串使用 Qt Unicode 字符串。
@@ -33,7 +34,7 @@ public:
 
 private:
     // 领域对象序列化辅助函数：只暴露 ID、类型和参数，不暴露 OCCT 句柄。
-    QJsonObject featureToJson(const domain::Feature& feature) const;
+    QJsonObject featureToJson(const domain::Feature& feature, const core::ShapeResult* result = nullptr) const;
     QJsonObject listFeatures() const;                         // list_features 实现。
     QJsonObject getFeature(const QJsonObject& arguments) const; // get_feature 实现。
     QJsonObject createFeature(const QJsonObject& arguments);  // create_feature 实现。

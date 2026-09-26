@@ -1,10 +1,24 @@
 #include "geometry/ShapeFactory.h"      // 工厂函数声明和 TopoDS_Shape 类型。
 
+#include <BRepCheck_Analyzer.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
+#include <TopExp_Explorer.hxx>
+#include <sstream>
+#include <utility>
+#include <cmath>
+#include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
+#include <TopLoc_Location.hxx>
+
 #include <spdlog/spdlog.h>              // 记录非法参数、OCCT 异常和成功构造信息。
 #include <Standard_Failure.hxx>          // OCCT 所有标准异常的共同基类。
 #include <BRepPrimAPI_MakeBox.hxx>       // OCCT 长方体构造器，只在实现文件暴露。
 #include <BRepPrimAPI_MakeCylinder.hxx>  // OCCT 圆柱体构造器。
 #include <BRepPrimAPI_MakeSphere.hxx>    // OCCT 球体构造器。
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepAlgoAPI_Common.hxx>
 
 namespace forge::geometry {
 
@@ -139,5 +153,120 @@ TopoDS_Shape ShapeFactory::makeSphere(double radius)
         spdlog::error("ShapeFactory::makeSphere unknown exception");
         return TopoDS_Shape(); // 防止异常穿透到 Qt 事件循环。
     }
+}
+
+TopoDS_Shape ShapeFactory::translate(const TopoDS_Shape& shape, double x, double y, double z)
+{
+    if (shape.IsNull() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return {};
+    try {
+        if (x == 0.0 && y == 0.0 && z == 0.0) return shape;
+        gp_Trsf transform;
+        transform.SetTranslation(gp_Vec(x, y, z));
+        // 刚体平移使用 Location，保留几何共享，无需复制或重新离散化实体。
+        return shape.Moved(TopLoc_Location(transform));
+    } catch (const Standard_Failure& error) {
+        spdlog::error("ShapeFactory::translate OCCT exception: {}",
+                      error.GetMessageString() ? error.GetMessageString() : "unknown");
+        return {};
+    }
+}
+
+
+core::ShapeResult ShapeFactory::inspectShape(const TopoDS_Shape& shape)
+{
+    if (shape.IsNull()) return {{}, core::RebuildStatus::Failed, "几何构造失败：没有生成形状"};
+    try {
+        if (!BRepCheck_Analyzer(shape).IsValid()) return {{}, core::RebuildStatus::Failed, "几何形状无效：拓扑检查未通过"};
+        if (!TopExp_Explorer(shape, TopAbs_VERTEX).More()) {
+            return {shape, core::RebuildStatus::Empty, "运算完成，结果为空"};
+        }
+        return {shape, core::RebuildStatus::Ready, "重建成功"};
+    } catch (const Standard_Failure& error) {
+        return {{}, core::RebuildStatus::Failed, std::string("形状检查异常：") +
+            (error.GetMessageString() ? error.GetMessageString() : "未知原因")};
+    } catch (const std::exception& error) {
+        return {{}, core::RebuildStatus::Failed, std::string("形状检查异常：") + error.what()};
+    }
+}
+
+namespace {
+core::ShapeResult emptyResult()
+{
+    TopoDS_Compound empty;
+    BRep_Builder builder;
+    builder.MakeCompound(empty);
+    return {empty, core::RebuildStatus::Empty, "运算完成，结果为空"};
+}
+
+template<class Operation>
+core::ShapeResult runBoolean(const TopoDS_Shape& base, const TopoDS_Shape& tool)
+{
+    try {
+        const auto first = ShapeFactory::inspectShape(base);
+        const auto second = ShapeFactory::inspectShape(tool);
+        if (!first.usable()) return {{}, core::RebuildStatus::Failed, "主体输入无效：" + first.message};
+        if (!second.usable()) return {{}, core::RebuildStatus::Failed, "工具输入无效：" + second.message};
+        // 合法空集合的运算规则由调用方处理；不把空 Compound 送入内核。
+        Operation operation(base, tool);
+        if (!operation.IsDone() || operation.HasErrors()) {
+            std::ostringstream details;
+            operation.DumpErrors(details);
+            return {{}, core::RebuildStatus::Failed, "布尔计算失败：" +
+                (details.str().empty() ? std::string("内核未完成运算") : details.str())};
+        }
+        return ShapeFactory::inspectShape(operation.Shape());
+    } catch (const Standard_Failure& error) {
+        return {{}, core::RebuildStatus::Failed, std::string("几何内核异常：") +
+            (error.GetMessageString() ? error.GetMessageString() : "未知原因")};
+    } catch (const std::exception& error) {
+        return {{}, core::RebuildStatus::Failed, std::string("几何计算异常：") + error.what()};
+    }
+}
+// 在判断空集合前检查两个输入，防止“一个输入为空”掩盖另一个输入损坏。
+std::pair<core::ShapeResult, core::ShapeResult> inspectInputs(const TopoDS_Shape& base, const TopoDS_Shape& tool)
+{
+    return {ShapeFactory::inspectShape(base), ShapeFactory::inspectShape(tool)};
+}
+}
+
+core::ShapeResult ShapeFactory::differenceResult(const TopoDS_Shape& base, const TopoDS_Shape& tool)
+{
+    const auto [first, second] = inspectInputs(base, tool);
+    if (!first.usable() || !second.usable()) return runBoolean<BRepAlgoAPI_Cut>(base, tool);
+    if (first.status == core::RebuildStatus::Empty) return emptyResult();
+    if (second.status == core::RebuildStatus::Empty) return first;
+    auto result = runBoolean<BRepAlgoAPI_Cut>(base, tool);
+    if (result.status == core::RebuildStatus::Empty) result.message = "差集完成，主体已被完全减去";
+    return result;
+}
+core::ShapeResult ShapeFactory::unionResult(const TopoDS_Shape& base, const TopoDS_Shape& tool)
+{
+    const auto [first, second] = inspectInputs(base, tool);
+    if (!first.usable() || !second.usable()) return runBoolean<BRepAlgoAPI_Fuse>(base, tool);
+    if (first.status == core::RebuildStatus::Empty) return second;
+    if (second.status == core::RebuildStatus::Empty) return first;
+    return runBoolean<BRepAlgoAPI_Fuse>(base, tool);
+}
+core::ShapeResult ShapeFactory::intersectionResult(const TopoDS_Shape& base, const TopoDS_Shape& tool)
+{
+    const auto [first, second] = inspectInputs(base, tool);
+    if (!first.usable() || !second.usable()) return runBoolean<BRepAlgoAPI_Common>(base, tool);
+    auto result = (first.status == core::RebuildStatus::Empty || second.status == core::RebuildStatus::Empty)
+        ? emptyResult() : runBoolean<BRepAlgoAPI_Common>(base, tool);
+    if (result.status == core::RebuildStatus::Empty) result.message = "交集完成，没有共同几何，结果为空";
+    return result;
+}
+
+TopoDS_Shape ShapeFactory::booleanDifference(const TopoDS_Shape& base, const TopoDS_Shape& tool)
+{
+    return differenceResult(base, tool).shape;
+}
+TopoDS_Shape ShapeFactory::booleanUnion(const TopoDS_Shape& base, const TopoDS_Shape& tool)
+{
+    return unionResult(base, tool).shape;
+}
+TopoDS_Shape ShapeFactory::booleanIntersection(const TopoDS_Shape& base, const TopoDS_Shape& tool)
+{
+    return intersectionResult(base, tool).shape;
 }
 } // namespace forge::geometry

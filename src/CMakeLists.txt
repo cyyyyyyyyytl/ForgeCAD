@@ -14,7 +14,10 @@ add_library(forgecore
     assistant/DeepSeekClient.cpp
     assistant/ToolRegistry.cpp
     # domain/geometry：参数化 Feature 及 OCCT 构造。
+    domain/ImportedFeature.cpp
+    domain/Feature.cpp
     domain/BoxFeature.cpp
+    domain/BooleanFeature.cpp
     domain/FeatureRegistry.cpp
     domain/DependencyGraph.cpp
     geometry/ShapeFactory.cpp
@@ -22,6 +25,7 @@ add_library(forgecore
     ui/Viewport3D.cpp
     domain/CylinderFeature.cpp
     domain/SphereFeature.cpp
+    infrastructure/StepIO.cpp
 )
 
 # 包含 src 根，便于 #include<core/...>

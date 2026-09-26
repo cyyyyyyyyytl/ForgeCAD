@@ -1,15 +1,21 @@
 #pragma once // ModelDocument 被 UI、AI 和测试共同包含，防止头文件重复展开。
 
+#include "core/ShapeResult.h"
 #include "domain/FeatureRegistry.h" // 公开接口使用 NumericParameters 类型。
 #include "domain/DependencyGraph.h"
+#include <TopoDS_Shape.hxx> // rebuildShapes() 返回按特征 ID 索引的 OCCT 形状。
 #include <map>         // 保存“特征类型 -> 已使用序号”的稳定计数器。
 #include <memory>      // unique_ptr 表达文档对每个 Feature 的唯一所有权。
 #include <string>      // 保存 ID、类型名和快照中的参数名。
 #include <string_view> // 查询和修改接口借用字符串，避免无意义复制。
+#include <unordered_map> // rebuildShapes() 按稳定 ID 查找本轮计算出的形状。
 #include <vector>      // 保存 Feature 顺序以及 Undo/Redo 两个栈。
 
 // 头文件只保存 Feature 的 unique_ptr 和指针；完整定义延迟到 .cpp 包含。
-namespace forge::domain { class Feature; }
+namespace forge::domain {
+class Feature;
+enum class BooleanOperation;
+}
 
 namespace forge::application {
 
@@ -29,6 +35,10 @@ namespace forge::application {
 // ============================================================
 class ModelDocument {
 public:
+    using RebuildReport = std::unordered_map<std::string, core::ShapeResult>;
+    RebuildReport rebuildReport() const;
+    // 只读收集最终结果；任何重建失败都会拒绝导出，避免把诊断上游当成成品。
+    core::ShapeResult shapeForExport() const;
     // 所有容器使用默认构造即可得到合法空文档，因此不需要自定义构造逻辑。
     ModelDocument() = default;
     // 放在 .cpp 定义，因为这里仅前向声明 Feature；销毁 unique_ptr 时才需完整类型。
@@ -40,8 +50,15 @@ public:
 
     // 创建特征：自动分配 Box001 形式的 ID，校验后写入文档并记录 Undo。
     domain::Feature& createFeature( const std::string& type,const domain::NumericParameters& parameters);
+    // 已校验的导入几何追加为一个特征，保留已有模型，一次操作可撤销。
+    domain::Feature& createImportedFeature(const TopoDS_Shape& shape, const std::string& sourceName);
+    // 从两个现有特征创建布尔特征；base 在前、tool 在后，整个创建只占一次 Undo。
+    domain::Feature& createBooleanFeature(
+        domain::BooleanOperation operation,
+        std::string_view baseId,
+        std::string_view toolId);
     // 登记现有特征间的依赖关系，并把修改作为一次可撤销操作。
-    // 目前只记录关系；真正使用上游几何的派生 Feature 留待后续实现。
+    // 重建几何时会按依赖关系提供上游形状。
     void addDependency(std::string_view featureId, std::string_view dependsOnId);
     // 修改特征的一个参数；对象、参数或范围非法时抛出 invalid_argument。
     void setParameter( std::string_view featureId, std::string_view parameterName,double value);
@@ -62,14 +79,22 @@ public:
     const domain::Feature* findFeature(std::string_view id) const;
     // 返回只读容器视图：允许 UI 遍历，禁止 UI 绕过 Document 增删元素。
     const std::vector<std::unique_ptr<domain::Feature>>& features() const;
+    // 兼容仅需要 Shape 的调用：失败为空 Shape，合法空结果为非 Null 的空 Compound。
+    std::unordered_map<std::string, TopoDS_Shape> rebuildShapes() const;
+    // 成功及合法空布尔结果隐藏输入；失败时展开到可用上游，按文档顺序返回。
+    std::vector<std::string> visibleFeatureIds() const;
+    // 使用同一次重建报告计算显示范围，失败结果展开到仍有效的上游。
+    std::vector<std::string> visibleFeatureIds(const RebuildReport& report) const;
 
 private:
-    // FeatureState 只保存可重建模型的数据，不保存 OCCT Shape 或内存地址。
-    // Shape 随时能由 Feature::rebuild() 重新计算，没有必要放进历史栈。
+    // 基本体/布尔快照保存定义；导入特征额外共享不可变的原始 B-Rep，
+    // 因为它不能由数值参数重新生成。快照不依赖外部 STEP 文件。
     struct FeatureState {
         std::string id;                     // 恢复后必须保持不变的稳定实例 ID。
         std::string type;                   // Registry 重建具体子类所需的类型名。
         domain::NumericParameters parameters; // 重建该对象所需的全部具名数值。
+        std::shared_ptr<const TopoDS_Shape> importedGeometry; // 导入对象无法从数值参数再生成。
+        std::string sourceName;
     };
     // 一个 DocumentState 就是一张“整个文档在某一时刻的照片”。
     struct DocumentState {

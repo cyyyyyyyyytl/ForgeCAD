@@ -1,5 +1,6 @@
 #pragma once // Feature 是多个模块共同包含的抽象接口，只允许定义一次。
 
+#include "core/ShapeResult.h"
 #include "domain/Parameter.h" // 子类接口需要 Parameter 列表和 ParameterValue。
 
 #include <TopoDS_Shape.hxx> // 所有具体特征统一重建成 OCCT 通用形状类型。
@@ -40,8 +41,12 @@ public:
     virtual void setParameter(const std::string& name, ParameterValue value) = 0;
     // 返回空字符串表示合法，否则返回领域错误原因。
     virtual std::string validate() const = 0;
-    // 根据当前参数计算 OCCT 几何；Feature 本身不长期缓存显示对象。
-    virtual TopoDS_Shape rebuild() const = 0;
+    // 根据当前参数和已算出的上游形状计算几何；基础体忽略 inputs。
+    // Feature 本身不长期缓存显示对象。
+    virtual TopoDS_Shape rebuild(const std::vector<TopoDS_Shape>& inputs = {}) const = 0;
+
+    // 文档使用带状态的接口；旧的 rebuild 保留给仅需要 Shape 的调用方。
+    virtual core::ShapeResult rebuildResult(const std::vector<TopoDS_Shape>& inputs = {}) const;
 
 private:
     std::string id_;   // 文档内的稳定实例身份，例如 Sphere001。

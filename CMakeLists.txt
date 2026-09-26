@@ -51,6 +51,7 @@ set(OCCT_LIBRARIES
 )
 
 # ---- 子目录/库 ----
+include(cmake/LocalFreeType.cmake)
 add_subdirectory(src)
 add_subdirectory(apps)
 
