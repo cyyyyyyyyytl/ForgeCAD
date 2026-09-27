@@ -13,6 +13,10 @@
 
 // ---- Qt 事件相关 ----
 #include <QMouseEvent>                  // 鼠标按下、移动、释放和位置数据。
+#include <QKeyEvent>
+#include <Geom_CartesianPoint.hxx>
+#include <gp_Vec.hxx>
+#include <cmath>
 #include <QWheelEvent>                  // 滚轮增量用于缩放相机。
 #include <QTimer>                       // QTimer::singleShot：延迟执行（首次重绘用）
 
@@ -162,6 +166,7 @@ void Viewport3D::initViewer()
 // ============================================================
 void Viewport3D::showShapes(const std::vector<TopoDS_Shape>& shapes, int selectedIndex, bool fitAll)
 {
+    cancelPointPick();
     if (!context_) { diagLog("showShapes: context_ is NULL!"); return; }
     if (!view_)    { diagLog("showShapes: view_ is NULL!"); return; }
 
@@ -261,6 +266,83 @@ void Viewport3D::resizeEvent(QResizeEvent*)
 }
 
 // 左键选择；中键拖动旋转；Shift+中键拖动平移。
+void Viewport3D::beginPointPick(double planeZ, int excludedIndex)
+{
+    cancelPointPick();
+    pickPlaneZ_=planeZ;
+    excludedPickIndex_=excludedIndex;
+    pickingPoint_=true;
+    setCursor(Qt::CrossCursor);
+    setFocus(Qt::OtherFocusReason);
+}
+
+void Viewport3D::cancelPointPick()
+{
+    const bool active=pickingPoint_;
+    pickingPoint_=false;
+    unsetCursor();
+    if (context_ && !pickMarker_.IsNull()) context_->Remove(pickMarker_,false);
+    pickMarker_.Nullify();
+    if (active) {
+        if (view_) view_->Redraw();
+        emit pointPickCancelled();
+    }
+}
+
+std::optional<geometry::PickedPoint> Viewport3D::pointAt(const QPoint& pixel) const
+{
+    if (!view_) return {};
+    try {
+        double x,y,z,vx,vy,vz;
+        view_->ConvertWithProj(pixel.x(),pixel.y(),x,y,z,vx,vy,vz);
+        gp_Pnt origin(x,y,z);
+        const auto camera=view_->Camera();
+        gp_Dir direction=camera->Direction();
+        if (camera->IsOrthographic()) {
+            // 正交射线从穿过相机的平面出发，避免漏掉投影平面前方的实体。
+            origin.Translate(gp_Vec(direction)*gp_Vec(origin,camera->Eye()).Dot(gp_Vec(direction)));
+        } else {
+            direction=gp_Dir(gp_Vec(camera->Eye(),origin));
+            origin=camera->Eye();
+        }
+        std::vector<TopoDS_Shape> targets;
+        for (int i=0;i<static_cast<int>(displayedShapes_.size());++i)
+            if (i!=excludedPickIndex_) targets.push_back(displayedShapes_[i]->Shape());
+        return geometry::pickPoint(origin,direction,targets,pickPlaneZ_);
+    } catch (const Standard_Failure&) { return {}; }
+}
+
+void Viewport3D::updatePointPreview(const QPoint& pixel)
+{
+    const auto hit=pointAt(pixel);
+    if (!context_) return;
+    if (!hit) {
+        if (!pickMarker_.IsNull()) context_->Erase(pickMarker_,true);
+        return;
+    }
+    const occ::handle<Geom_CartesianPoint> point=new Geom_CartesianPoint(hit->point);
+    if (pickMarker_.IsNull()) {
+        pickMarker_=new AIS_Point(point);
+        pickMarker_->SetColor(Quantity_Color(1.0,0.8,0.1,Quantity_TOC_RGB));
+        pickMarker_->SetMarker(Aspect_TOM_O_PLUS);
+        context_->Display(pickMarker_,0,-1,false);
+    } else {
+        pickMarker_->SetComponent(point);
+        context_->Redisplay(pickMarker_,false);
+        context_->Display(pickMarker_,0,-1,false);
+    }
+    view_->Redraw();
+    emit pointPreview(hit->point.X(),hit->point.Y(),hit->point.Z(),hit->onSurface);
+}
+
+void Viewport3D::keyPressEvent(QKeyEvent* event)
+{
+    if (pickingPoint_ && event->key()==Qt::Key_Escape) {
+        cancelPointPick(); event->accept(); return;
+    }
+    QWidget::keyPressEvent(event);
+}
+
 void Viewport3D::mousePressEvent(QMouseEvent* e)
 {
     pressPosition_ = e->position().toPoint(); // 记录按下点，释放时判断单击或拖动。
@@ -294,6 +376,10 @@ void Viewport3D::mouseMoveEvent(QMouseEvent* e)
         return; // 平移已经消费本次事件。
     }
 
+    if (pickingPoint_ && e->buttons()==Qt::NoButton) {
+        updatePointPreview(e->position().toPoint());
+        return;
+    }
     if (e->buttons() == Qt::NoButton && context_ && view_) {
         context_->MoveTo(e->x(), e->y(), view_, true); // 更新蓝色悬停预选高亮。
     }
@@ -313,6 +399,16 @@ void Viewport3D::mouseReleaseEvent(QMouseEvent* e)
     // 移动超过 4 像素视为拖动而非单击，避免误选。
     if ((e->position().toPoint() - pressPosition_).manhattanLength() > 4) return;
 
+    if (pickingPoint_) {
+        const auto hit=pointAt(e->position().toPoint());
+        if (hit) {
+            // 先结束视口模式，业务槽再修改文档和重绘。
+            pickingPoint_=false;
+            cancelPointPick();
+            emit pointPicked(hit->point.X(),hit->point.Y(),hit->point.Z());
+        }
+        e->accept(); return;
+    }
     context_->MoveTo(e->x(), e->y(), view_, true); // 在释放位置执行最终命中检测。
     if (!context_->HasDetected()) {
         context_->ClearSelected(false); // 点击空白时取消已有选择。
@@ -338,6 +434,7 @@ void Viewport3D::mouseReleaseEvent(QMouseEvent* e)
 
 void Viewport3D::leaveEvent(QEvent*)
 {
+    if (context_ && !pickMarker_.IsNull()) context_->Erase(pickMarker_,true);
     if (context_) context_->ClearDetected(true); // 离开视口时清掉悬停高亮并刷新。
 }
 

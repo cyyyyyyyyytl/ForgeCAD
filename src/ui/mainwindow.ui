@@ -70,10 +70,10 @@
    <widget class="QMenu" name="menu">
     <property name="geometry">
      <rect>
-      <x>275</x>
+      <x>315</x>
       <y>106</y>
       <width>120</width>
-      <height>116</height>
+      <height>160</height>
      </rect>
     </property>
     <property name="title">
@@ -82,6 +82,8 @@
     <addaction name="actionNewBox"/>
     <addaction name="actionNewCylinder"/>
     <addaction name="actionNewSphere"/>
+    <addaction name="actionNewRectangleSketch"/>
+    <addaction name="actionNewCircleSketch"/>
    </widget>
    <widget class="QMenu" name="menuEdit">
     <property name="title">
@@ -105,11 +107,23 @@
     </property>
     <addaction name="actionExportStep"/>
     <addaction name="actionImportStep"/>
+    <addaction name="actionNewDocument"/>
+    <addaction name="actionOpenDocument"/>
+    <addaction name="actionSaveDocument"/>
+    <addaction name="actionSaveDocumentAs"/>
+   </widget>
+   <widget class="QMenu" name="menu_3">
+    <property name="title">
+     <string>建模</string>
+    </property>
+    <addaction name="actionExtrude"/>
+    <addaction name="actionExtrudeCut"/>
    </widget>
    <addaction name="menuFile"/>
    <addaction name="menu"/>
    <addaction name="menuEdit"/>
    <addaction name="menu_2"/>
+   <addaction name="menu_3"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
   <widget class="QToolBar" name="toolBar">
@@ -224,6 +238,58 @@
   <action name="actionImportStep">
    <property name="text">
     <string>导入 STEP…</string>
+   </property>
+  </action>
+  <action name="actionNewDocument">
+   <property name="text">
+    <string>新建文档</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+N</string>
+   </property>
+  </action>
+  <action name="actionOpenDocument">
+   <property name="text">
+    <string>打开…</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+O</string>
+   </property>
+  </action>
+  <action name="actionSaveDocument">
+   <property name="text">
+    <string>保存</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+S</string>
+   </property>
+  </action>
+  <action name="actionSaveDocumentAs">
+   <property name="text">
+    <string>另存为…</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+Shift+S</string>
+   </property>
+  </action>
+  <action name="actionNewRectangleSketch">
+   <property name="text">
+    <string>矩形草图</string>
+   </property>
+  </action>
+  <action name="actionExtrude">
+   <property name="text">
+    <string>拉伸</string>
+   </property>
+  </action>
+  <action name="actionNewCircleSketch">
+   <property name="text">
+    <string>圆形草图</string>
+   </property>
+  </action>
+  <action name="actionExtrudeCut">
+   <property name="text">
+    <string>拉伸切除</string>
    </property>
   </action>
  </widget>

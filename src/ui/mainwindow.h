@@ -22,6 +22,7 @@
 
 class QStandardItemModel;  // 前向声明：树的"数据模型"（放类外=全局类；指针够用，完整定义在 .cpp）
 class QLabel;
+class QCloseEvent;
 class AssistantDialog; // 这里只保存指针，完整对话框定义留给 .cpp。
 
 namespace Ui {
@@ -43,6 +44,15 @@ public:
     ~MainWindow();                                  // 释放手写 new 的 Ui 包装对象。
 
 private slots:
+    void on_actionExtrude_triggered();
+    void on_actionExtrudeCut_triggered();
+    void on_actionPlaceFeature_triggered();
+    void on_actionNewRectangleSketch_triggered();
+    void on_actionNewCircleSketch_triggered();
+    void on_actionNewDocument_triggered();
+    void on_actionOpenDocument_triggered();
+    void on_actionSaveDocument_triggered();
+    void on_actionSaveDocumentAs_triggered();
     void on_actionImportStep_triggered(); // 用户在 Designer 添加同名 QAction 后自动连接。
     void on_actionExportStep_triggered(); // 文件菜单导出当前最终几何。
     // 菜单动作 → Qt 按名字约定自动连接（on_<动作名>_triggered）
@@ -57,6 +67,11 @@ private slots:
     void on_actionDeleteFeature_triggered();// 编辑→删除选中特征（Del）
 
 private:
+    void closeEvent(QCloseEvent* event) override;
+    bool saveDocument(bool saveAs);
+    bool confirmDiscardChanges();
+    bool documentModified() const;
+    QString documentPath_;
     Ui::MainWindow *ui; // uic 生成界面的访问入口，例如 ui->modelTree。
     forge::ui::Viewport3D* viewport_ = nullptr; // 动态嵌入 viewportContainer 的 3D 控件。
 
@@ -65,6 +80,7 @@ private:
     forge::assistant::AgentController* agentController_ = nullptr; // AI 工具循环协调器。
     AssistantDialog* assistantDialog_ = nullptr; // 非模态 AI 对话窗口，重复打开时复用。
     std::string selectedFeatureId_; // 当前树/属性/视口共同选中的稳定对象 ID。
+    std::string positioningFeatureId_;
     std::vector<std::string> viewportFeatureIds_; // 对应 Viewport3D 中有效 Shape 的顺序。
     forge::application::ModelDocument::RebuildReport rebuildReport_;
     QLabel* rebuildStatusLabel_ = nullptr; // 当前属性面板中的状态说明，由 Qt 管理。

@@ -18,6 +18,8 @@ public:
     static TopoDS_Shape translate(const TopoDS_Shape& shape, double x, double y, double z);
     // 检查非空形状的拓扑有效性；没有顶点的合法空结果与失败分开表示。
     static core::ShapeResult inspectShape(const TopoDS_Shape& shape);
+    // 接受有效实体及纯实体集合，拒绝草图、曲面和混合集合。
+    static bool isSolidBody(const TopoDS_Shape& shape);
     static core::ShapeResult differenceResult(const TopoDS_Shape& base, const TopoDS_Shape& tool);
     static core::ShapeResult unionResult(const TopoDS_Shape& base, const TopoDS_Shape& tool);
     static core::ShapeResult intersectionResult(const TopoDS_Shape& base, const TopoDS_Shape& tool);
@@ -27,6 +29,12 @@ public:
     static TopoDS_Shape booleanUnion(const TopoDS_Shape& base, const TopoDS_Shape& tool);
     // 交集：只保留 base 和 tool 重叠的部分；失败返回空 Shape。
     static TopoDS_Shape booleanIntersection(const TopoDS_Shape& base, const TopoDS_Shape& tool);
+    // 在 XY 平面生成矩形闭合轮廓，左下角为原点。
+    static TopoDS_Shape makeRectangleWire(double length, double width);
+    // 在 XY 平面生成精确圆形闭合轮廓，圆心为原点。
+    static TopoDS_Shape makeCircleWire(double radius);
+    // 将平面闭合轮廓沿 Z 拉伸成实体；有符号高度决定正反方向。
+    static TopoDS_Shape extrudeWire(const TopoDS_Shape& profile, double height);
 };
 
 } // namespace forge::geometry

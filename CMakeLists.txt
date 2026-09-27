@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(ForgeCAD VERSION 0.1.0 LANGUAGES CXX)
+project(ForgeCAD VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -52,6 +52,7 @@ set(OCCT_LIBRARIES
 
 # ---- 子目录/库 ----
 include(cmake/LocalFreeType.cmake)
+include(cmake/Miniz.cmake)
 add_subdirectory(src)
 add_subdirectory(apps)
 

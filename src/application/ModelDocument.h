@@ -1,8 +1,10 @@
 #pragma once // ModelDocument 被 UI、AI 和测试共同包含，防止头文件重复展开。
-
+#include "application/DocumentData.h"
+#include <cstdint>
 #include "core/ShapeResult.h"
 #include "domain/FeatureRegistry.h" // 公开接口使用 NumericParameters 类型。
 #include "domain/DependencyGraph.h"
+#include "domain/ExtrudeFeature.h"
 #include <TopoDS_Shape.hxx> // rebuildShapes() 返回按特征 ID 索引的 OCCT 形状。
 #include <map>         // 保存“特征类型 -> 已使用序号”的稳定计数器。
 #include <memory>      // unique_ptr 表达文档对每个 Feature 的唯一所有权。
@@ -40,7 +42,7 @@ public:
     // 只读收集最终结果；任何重建失败都会拒绝导出，避免把诊断上游当成成品。
     core::ShapeResult shapeForExport() const;
     // 所有容器使用默认构造即可得到合法空文档，因此不需要自定义构造逻辑。
-    ModelDocument() = default;
+    ModelDocument();
     // 放在 .cpp 定义，因为这里仅前向声明 Feature；销毁 unique_ptr 时才需完整类型。
     ~ModelDocument();
 
@@ -52,6 +54,11 @@ public:
     domain::Feature& createFeature( const std::string& type,const domain::NumericParameters& parameters);
     // 已校验的导入几何追加为一个特征，保留已有模型，一次操作可撤销。
     domain::Feature& createImportedFeature(const TopoDS_Shape& shape, const std::string& sourceName);
+    // 一个草图输入、正高度与方向；创建和依赖登记只占一次 Undo。
+    domain::Feature& createExtrudeFeature(std::string_view sketchId, double height,
+        domain::ExtrudeDirection direction = domain::ExtrudeDirection::Forward);
+    domain::Feature& createExtrudeCutFeature(std::string_view baseId, std::string_view sketchId,
+        double height, domain::ExtrudeDirection direction = domain::ExtrudeDirection::Forward);
     // 从两个现有特征创建布尔特征；base 在前、tool 在后，整个创建只占一次 Undo。
     domain::Feature& createBooleanFeature(
         domain::BooleanOperation operation,
@@ -62,6 +69,8 @@ public:
     void addDependency(std::string_view featureId, std::string_view dependsOnId);
     // 修改特征的一个参数；对象、参数或范围非法时抛出 invalid_argument。
     void setParameter( std::string_view featureId, std::string_view parameterName,double value);
+    // 同时设置 XYZ，一次点击定位只占一条历史。
+    void setPosition(std::string_view featureId, double x, double y, double z);
     // 按稳定 ID 连同所有下游特征删除，并把整个操作记为一次 Undo。
     void deleteFeature(std::string_view featureId);
     // 删除前只读预览：返回依赖者优先、目标最后的全部受影响 ID。
@@ -85,6 +94,13 @@ public:
     std::vector<std::string> visibleFeatureIds() const;
     // 使用同一次重建报告计算显示范围，失败结果展开到仍有效的上游。
     std::vector<std::string> visibleFeatureIds(const RebuildReport& report) const;
+    // 只读导出建模数据，不修改模型或 Undo/Redo。
+    DocumentData exportData() const;
+    // 完整校验并准备临时对象，成功后替换；打开文档清空会话历史。
+    void replaceData(const DocumentData& data);
+    bool isModified() const { return revision_ != savedRevision_; }
+    void markSaved() { savedRevision_ = revision_; }
+    void swap(ModelDocument& other) noexcept;
 
 private:
     // 基本体/布尔快照保存定义；导入特征额外共享不可变的原始 B-Rep，
@@ -98,6 +114,7 @@ private:
     };
     // 一个 DocumentState 就是一张“整个文档在某一时刻的照片”。
     struct DocumentState {
+        std::uint64_t revision = 0;
         std::vector<FeatureState> features;
         domain::DependencyGraph graph;
     };
@@ -117,6 +134,10 @@ private:
     // vector 末尾是栈顶；新操作保存“操作前状态”并清空 redoStack_。
     std::vector<DocumentState> undoStack_;
     std::vector<DocumentState> redoStack_;
+    std::string documentId_; // 文档身份，不随编辑和撤销重做改变。
+    std::uint64_t revision_ = 0;
+    std::uint64_t savedRevision_ = 0;
+    std::uint64_t nextRevision_ = 1;
 };
 
 } // namespace forge::application

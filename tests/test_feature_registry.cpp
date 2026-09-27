@@ -6,10 +6,25 @@
 using forge::domain::FeatureRegistry; // 缩短静态 Registry 调用。
 using forge::domain::NumericParameters; // 记录被测具名参数 Map 类型。
 
-// 验证登记表包含全部三种类型，并能正确描述 Box 参数与未知类型。
+// 验证登记表包含基础体和草图，并能正确描述参数与未知类型。
 TEST(FeatureRegistryTest, DescribesAllSupportedFeatures)
 {
-    EXPECT_EQ(FeatureRegistry::all().size(), 3u); // 当前产品合同明确支持三类基础体。
+    EXPECT_EQ(FeatureRegistry::all().size(), 5u); // 三类基础体、矩形和圆形草图。
+    const auto* circle = FeatureRegistry::find("CircleSketch");
+    ASSERT_NE(circle, nullptr);
+    ASSERT_EQ(circle->parameters.size(), 4u);
+    EXPECT_EQ(circle->parameters[0].name, "radius");
+    EXPECT_EQ(circle->parameters[1].name, "x");
+    EXPECT_EQ(circle->parameters[2].name, "y");
+    EXPECT_EQ(circle->parameters[3].name, "z");
+    const auto* sketch = FeatureRegistry::find("RectangleSketch");
+    ASSERT_NE(sketch, nullptr);
+    ASSERT_EQ(sketch->parameters.size(), 5u);
+    EXPECT_EQ(sketch->parameters[0].name, "length");
+    EXPECT_EQ(sketch->parameters[1].name, "width");
+    EXPECT_EQ(sketch->parameters[2].name, "x");
+    EXPECT_EQ(sketch->parameters[3].name, "y");
+    EXPECT_EQ(sketch->parameters[4].name, "z");
 
     const auto* box = FeatureRegistry::find("Box"); // 借用登记表中的只读 Box 描述。
     ASSERT_NE(box, nullptr);                         // 后续解引用前必须保证查找成功。

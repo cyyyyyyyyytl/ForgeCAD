@@ -8,7 +8,8 @@
 
 #include <algorithm> // std::find_if 负责按名称查找类型和参数。
 #include <stdexcept> // 区分用户输入错误 invalid_argument 和开发遗漏 logic_error。
-
+#include "domain/RectangleSketchFeature.h"
+#include "domain/CircleSketchFeature.h"
 namespace forge::domain {
 
 const std::vector<FeatureDescriptor>& FeatureRegistry::all()
@@ -37,6 +38,19 @@ const std::vector<FeatureDescriptor>& FeatureRegistry::all()
             {"y", 0.0, -positionLimit, positionLimit, true},
             {"z", 0.0, -positionLimit, positionLimit, true},
         }},
+        {"RectangleSketch", {
+                {"length", 100.0, 1.0, 10000.0},
+                {"width",   50.0, 1.0, 10000.0},
+                {"x", 0.0, -positionLimit, positionLimit, true},
+                {"y", 0.0, -positionLimit, positionLimit, true},
+                {"z", 0.0, -positionLimit, positionLimit, true},
+        }},
+        {"CircleSketch",{
+                {"radius", 20.0, 1.0, 10000.0},
+                {"x", 0.0, -positionLimit, positionLimit, true},
+                {"y", 0.0, -positionLimit, positionLimit, true},
+                {"z", 0.0, -positionLimit, positionLimit, true},
+        }},
     };
     return descriptors; // 返回同一份静态登记表的只读引用，不发生容器复制。
 }
@@ -49,6 +63,12 @@ const FeatureDescriptor* FeatureRegistry::find(std::string_view type)
         {"y", 0.0, -positionLimit, positionLimit, true},
         {"z", 0.0, -positionLimit, positionLimit, true}}};
     if (type == "Imported") return &imported;
+    // 拉伸有参数说明，但必须由文档指定草图输入后创建。
+    static const FeatureDescriptor extrude{"Extrude", {
+        {"height",10.0,1.0,10000.0}, {"direction",0.0,0.0,2.0,true}}};
+    if (type == "Extrude") return &extrude;
+    static const FeatureDescriptor extrudeCut{"ExtrudeCut",extrude.parameters};
+    if (type == "ExtrudeCut") return &extrudeCut;
     // 当前只有三类特征，线性查找比额外索引更直接。
     const auto& descriptors = all(); // 借用全局唯一登记表，避免复制全部描述。
     const auto it = std::find_if(
@@ -85,6 +105,8 @@ std::unique_ptr<Feature> FeatureRegistry::create(
     const NumericParameters& parameters)
 {
     if (type == "Imported") throw std::invalid_argument("导入特征必须提供原始几何");
+    if (type == "Extrude") throw std::invalid_argument("拉伸必须通过草图创建");
+    if (type == "ExtrudeCut") throw std::invalid_argument("拉伸切除必须指定主体和草图");
     // 第一层校验：特征类型必须已登记。
     const FeatureDescriptor* descriptor = find(type);
     if (!descriptor) {
@@ -122,6 +144,14 @@ std::unique_ptr<Feature> FeatureRegistry::create(
     }
     if (type == "Sphere") {
         return std::make_unique<SphereFeature>(id, values[0], values[1], values[2], values[3]);
+    }
+    if (type == "RectangleSketch") {
+        return std::make_unique<RectangleSketchFeature>(
+            id, values[0], values[1], values[2], values[3], values[4]);
+    }
+    if (type == "CircleSketch") {
+        return std::make_unique<CircleSketchFeature>(
+            id, values[0], values[1], values[2], values[3]);
     }
 
     // 说明已登记但创建分支遗漏，这是开发错误而不是用户输入错误。

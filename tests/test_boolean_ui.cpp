@@ -3,6 +3,8 @@
 #include "infrastructure/StepIO.h"
 #include "geometry/ShapeFactory.h"
 #include "ui/mainwindow.h"
+#include "ui/Viewport3D.h"
+#include <QKeyEvent>
 #include "ui/RebuildFeedback.h"
 
 #include <QAction>
@@ -25,6 +27,8 @@
 #include <QPushButton>
 #include <QTimer>
 #include <QTreeView>
+#include <QCloseEvent>
+#include "infrastructure/NativeDocumentIO.h"
 
 namespace {
 
@@ -406,4 +410,349 @@ TEST(StepImportUiTest, CorruptFileShowsErrorWithoutChangingModel)
     EXPECT_FALSE(hasFeature(window, "Imported001"));
     window.findChild<QAction*>("actionUndo")->trigger();
     EXPECT_FALSE(hasFeature(window, "Box001"));
+}
+
+TEST(NativeDocumentUiTest, SaveOpenAndHistoryRestoreDocumentCleanState)
+{
+    ensureApplication();
+    MainWindow window;
+    createBox(window,10);
+    EXPECT_TRUE(window.isWindowModified());
+    QTemporaryDir dir; ASSERT_TRUE(dir.isValid());
+    const auto path=dir.filePath("part.forgecad");
+    QTimer::singleShot(0,[&]() {
+        auto* dialog=qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing save dialog"; return; }
+        dialog->selectFile(path);
+        QMetaObject::invokeMethod(dialog,"accept",Qt::DirectConnection);
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionSaveDocument_triggered",Qt::DirectConnection));
+    EXPECT_TRUE(QFile::exists(path)); EXPECT_FALSE(window.isWindowModified());
+    window.findChild<QAction*>("actionUndo")->trigger();
+    EXPECT_TRUE(window.isWindowModified());
+    window.findChild<QAction*>("actionRedo")->trigger();
+    EXPECT_FALSE(window.isWindowModified());
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionNewDocument_triggered",Qt::DirectConnection));
+    EXPECT_FALSE(hasFeature(window,"Box001"));
+    QTimer::singleShot(0,[&]() {
+        auto* dialog=qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing open dialog"; return; }
+        dialog->selectFile(path);
+        QMetaObject::invokeMethod(dialog,"accept",Qt::DirectConnection);
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionOpenDocument_triggered",Qt::DirectConnection));
+    EXPECT_TRUE(hasFeature(window,"Box001")); EXPECT_FALSE(window.isWindowModified());
+    window.findChild<QAction*>("actionUndo")->trigger();
+    EXPECT_TRUE(hasFeature(window,"Box001"));
+}
+
+TEST(NativeDocumentUiTest, CancelCloseKeepsDirtyDocument)
+{
+    ensureApplication();
+    MainWindow window;
+    createBox(window,10);
+    QTimer::singleShot(0,[]() {
+        auto* message=qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        if (!message) { ADD_FAILURE()<<"Missing save prompt"; return; }
+        message->button(QMessageBox::Cancel)->click();
+    });
+    QCloseEvent event;
+    QApplication::sendEvent(&window,&event);
+    EXPECT_FALSE(event.isAccepted());
+    EXPECT_TRUE(hasFeature(window,"Box001")); EXPECT_TRUE(window.isWindowModified());
+}
+
+TEST(NativeDocumentUiTest, CancelSaveAndFailedOpenKeepCurrentModel)
+{
+    ensureApplication(); MainWindow window; createBox(window,10);
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing save dialog"; return; }
+        dialog->reject();
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionSaveDocument_triggered",Qt::DirectConnection));
+    EXPECT_TRUE(window.isWindowModified()); EXPECT_TRUE(hasFeature(window,"Box001"));
+    QTemporaryDir dir; const auto path=dir.filePath("bad.forgecad");
+    QFile file(path); ASSERT_TRUE(file.open(QIODevice::WriteOnly)); file.write("bad archive"); file.close();
+    QTimer::singleShot(0,[&]() {
+        auto* dialog=qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing open dialog"; return; }
+        dialog->selectFile(path);
+        QTimer::singleShot(0,[]() {
+            auto* prompt=qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            if (!prompt) { ADD_FAILURE()<<"Missing dirty prompt"; return; }
+            QTimer::singleShot(0,[]() {
+                auto* error=qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+                if (!error) { ADD_FAILURE()<<"Missing open error"; return; }
+                error->accept();
+            });
+            prompt->button(QMessageBox::Discard)->click();
+        });
+        QMetaObject::invokeMethod(dialog,"accept",Qt::DirectConnection);
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionOpenDocument_triggered",Qt::DirectConnection));
+    EXPECT_TRUE(window.isWindowModified()); EXPECT_TRUE(hasFeature(window,"Box001"));
+}
+
+TEST(RectangleSketchUiTest, MenuCreatesSketchAndSupportsCancellationAndHistory)
+{
+    ensureApplication(); MainWindow window;
+    auto* action=window.findChild<QAction*>("actionNewRectangleSketch");
+    ASSERT_NE(action,nullptr);
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing rectangle dialog"; return; }
+        EXPECT_EQ(dialog->windowTitle(),QStringLiteral("新建矩形草图"));
+        EXPECT_EQ(dialog->findChildren<QDoubleSpinBox*>().size(),5);
+        dialog->findChild<QDoubleSpinBox*>("length")->setValue(10);
+        dialog->findChild<QDoubleSpinBox*>("width")->setValue(20);
+        dialog->findChild<QDoubleSpinBox*>("x")->setValue(-3);
+        dialog->findChild<QDoubleSpinBox*>("y")->setValue(4);
+        dialog->accept();
+    });
+    action->trigger();
+    EXPECT_TRUE(hasFeature(window,"RectangleSketch001"));
+    auto* tree=window.findChild<QTreeView*>("modelTree");
+    EXPECT_EQ(tree->model()->index(0,0).data().toString(),QStringLiteral("矩形草图"));
+    window.findChild<QAction*>("actionUndo")->trigger();
+    EXPECT_FALSE(hasFeature(window,"RectangleSketch001"));
+    window.findChild<QAction*>("actionRedo")->trigger();
+    EXPECT_TRUE(hasFeature(window,"RectangleSketch001"));
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing rectangle dialog"; return; }
+        dialog->reject();
+    });
+    action->trigger();
+    EXPECT_FALSE(hasFeature(window,"RectangleSketch002"));
+}
+
+TEST(ExtrudeUiTest, SlotCreatesExtrusionFromSketchAndSupportsCancelAndHistory)
+{
+    ensureApplication(); MainWindow window;
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing sketch dialog"; return; }
+        dialog->findChild<QDoubleSpinBox*>("length")->setValue(10);
+        dialog->findChild<QDoubleSpinBox*>("width")->setValue(20);
+        dialog->accept();
+    });
+    window.findChild<QAction*>("actionNewRectangleSketch")->trigger();
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing extrude dialog"; return; }
+        EXPECT_EQ(dialog->objectName(),"extrudeDialog");
+        auto* combo=dialog->findChild<QComboBox*>("extrudeSketchCombo");
+        ASSERT_NE(combo,nullptr); EXPECT_EQ(combo->count(),1);
+        EXPECT_EQ(combo->currentData().toString(),"RectangleSketch001");
+        dialog->findChild<QDoubleSpinBox*>("extrudeHeight")->setValue(5);
+        dialog->accept();
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionExtrude_triggered",Qt::DirectConnection));
+    EXPECT_TRUE(hasFeature(window,"Extrude001"));
+    window.findChild<QAction*>("actionUndo")->trigger(); EXPECT_FALSE(hasFeature(window,"Extrude001"));
+    EXPECT_TRUE(hasFeature(window,"RectangleSketch001"));
+    window.findChild<QAction*>("actionRedo")->trigger(); EXPECT_TRUE(hasFeature(window,"Extrude001"));
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing extrude dialog"; return; }
+        dialog->reject();
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionExtrude_triggered",Qt::DirectConnection));
+    EXPECT_FALSE(hasFeature(window,"Extrude002"));
+}
+
+TEST(ExtrudeUiTest, EmptyDocumentExplainsSketchRequirement)
+{
+    ensureApplication(); MainWindow window;
+    QTimer::singleShot(0,[]() {
+        auto* message=qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        if (!message) { ADD_FAILURE()<<"Missing sketch requirement"; return; }
+        EXPECT_TRUE(message->text().contains(QStringLiteral("矩形草图"))); message->accept();
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionExtrude_triggered",Qt::DirectConnection));
+    EXPECT_FALSE(hasFeature(window,"Extrude001"));
+}
+
+TEST(CircleSketchUiTest, CreationSlotAndExtrusionSupportHistoryAndCancellation)
+{
+    ensureApplication(); MainWindow window;
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing circle dialog"; return; }
+        EXPECT_EQ(dialog->windowTitle(),QStringLiteral("新建圆形草图"));
+        EXPECT_EQ(dialog->findChildren<QDoubleSpinBox*>().size(),4);
+        dialog->findChild<QDoubleSpinBox*>("radius")->setValue(10);
+        dialog->findChild<QDoubleSpinBox*>("x")->setValue(-3);
+        dialog->findChild<QDoubleSpinBox*>("y")->setValue(4);
+        dialog->accept();
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionNewCircleSketch_triggered",Qt::DirectConnection));
+    ASSERT_TRUE(hasFeature(window,"CircleSketch001"));
+    auto* tree=window.findChild<QTreeView*>("modelTree");
+    EXPECT_EQ(tree->model()->index(0,0).data().toString(),QStringLiteral("圆形草图"));
+    window.findChild<QAction*>("actionUndo")->trigger();
+    EXPECT_FALSE(hasFeature(window,"CircleSketch001"));
+    window.findChild<QAction*>("actionRedo")->trigger();
+    ASSERT_TRUE(hasFeature(window,"CircleSketch001"));
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing circle dialog"; return; }
+        dialog->reject();
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionNewCircleSketch_triggered",Qt::DirectConnection));
+    EXPECT_FALSE(hasFeature(window,"CircleSketch002"));
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing extrusion dialog"; return; }
+        auto* combo=dialog->findChild<QComboBox*>("extrudeSketchCombo");
+        ASSERT_NE(combo,nullptr);
+        EXPECT_EQ(combo->count(),1);
+        EXPECT_EQ(combo->currentData().toString(),"CircleSketch001");
+        dialog->findChild<QDoubleSpinBox*>("extrudeHeight")->setValue(5);
+        dialog->accept();
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionExtrude_triggered",Qt::DirectConnection));
+    EXPECT_TRUE(hasFeature(window,"Extrude001"));
+    window.findChild<QAction*>("actionUndo")->trigger();
+    EXPECT_FALSE(hasFeature(window,"Extrude001"));
+    window.findChild<QAction*>("actionRedo")->trigger();
+    EXPECT_TRUE(hasFeature(window,"Extrude001"));
+}
+
+TEST(ExtrudeUiTest, DirectionChoicesAndPropertyEditingFollowUndo)
+{
+    ensureApplication(); MainWindow window;
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing sketch dialog"; return; }
+        dialog->accept();
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionNewCircleSketch_triggered",Qt::DirectConnection));
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing extrusion dialog"; return; }
+        auto* direction=dialog->findChild<QComboBox*>("extrudeDirection");
+        ASSERT_NE(direction,nullptr);
+        EXPECT_EQ(direction->count(),3);
+        EXPECT_EQ(direction->currentData().toInt(),0);
+        EXPECT_TRUE(direction->itemText(1).contains(QStringLiteral("反向")));
+        EXPECT_TRUE(direction->itemText(2).contains(QStringLiteral("对称")));
+        direction->setCurrentIndex(2);
+        dialog->accept();
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionExtrude_triggered",Qt::DirectConnection));
+    auto* direction=window.findChild<QComboBox*>("direction");
+    ASSERT_NE(direction,nullptr);
+    EXPECT_EQ(direction->currentData().toInt(),2);
+    direction->setCurrentIndex(1);
+    EXPECT_EQ(direction->currentData().toInt(),1);
+    window.findChild<QAction*>("actionUndo")->trigger();
+    QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+    direction=window.findChild<QComboBox*>("direction");
+    ASSERT_NE(direction,nullptr); EXPECT_EQ(direction->currentData().toInt(),2);
+    window.findChild<QAction*>("actionRedo")->trigger();
+    QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+    direction=window.findChild<QComboBox*>("direction");
+    ASSERT_NE(direction,nullptr); EXPECT_EQ(direction->currentData().toInt(),1);
+}
+
+TEST(ExtrudeCutUiTest, SlotFiltersInputsCreatesHoleAndSupportsCancelAndHistory)
+{
+    ensureApplication(); MainWindow window;
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing box dialog"; return; }
+        dialog->findChild<QDoubleSpinBox*>("length")->setValue(20);
+        dialog->findChild<QDoubleSpinBox*>("width")->setValue(20);
+        dialog->findChild<QDoubleSpinBox*>("height")->setValue(10);
+        dialog->accept();
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionNewBox_triggered",Qt::DirectConnection));
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing sketch dialog"; return; }
+        dialog->findChild<QDoubleSpinBox*>("radius")->setValue(2);
+        dialog->findChild<QDoubleSpinBox*>("x")->setValue(10);
+        dialog->findChild<QDoubleSpinBox*>("y")->setValue(10);
+        dialog->accept();
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionNewCircleSketch_triggered",Qt::DirectConnection));
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing cut dialog"; return; }
+        EXPECT_EQ(dialog->windowTitle(),QStringLiteral("拉伸切除"));
+        auto* base=dialog->findChild<QComboBox*>("extrudeCutBase");
+        auto* sketch=dialog->findChild<QComboBox*>("extrudeCutSketch");
+        ASSERT_NE(base,nullptr); ASSERT_NE(sketch,nullptr);
+        EXPECT_EQ(base->count(),1); EXPECT_EQ(sketch->count(),1);
+        EXPECT_EQ(base->currentData().toString(),"Box001");
+        EXPECT_EQ(sketch->currentData().toString(),"CircleSketch001");
+        dialog->findChild<QDoubleSpinBox*>("extrudeCutHeight")->setValue(10);
+        dialog->accept();
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionExtrudeCut_triggered",Qt::DirectConnection));
+    EXPECT_TRUE(hasFeature(window,"ExtrudeCut001"));
+    QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+    ASSERT_NE(window.findChild<QComboBox*>("direction"),nullptr);
+    window.findChild<QAction*>("actionUndo")->trigger(); EXPECT_FALSE(hasFeature(window,"ExtrudeCut001"));
+    window.findChild<QAction*>("actionRedo")->trigger(); EXPECT_TRUE(hasFeature(window,"ExtrudeCut001"));
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing cut dialog"; return; }
+        EXPECT_EQ(dialog->findChild<QComboBox*>("extrudeCutBase")->currentData().toString(),"ExtrudeCut001");
+        dialog->reject();
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionExtrudeCut_triggered",Qt::DirectConnection));
+    EXPECT_FALSE(hasFeature(window,"ExtrudeCut002"));
+}
+
+TEST(ExtrudeCutUiTest, MissingInputsShowRequirement)
+{
+    ensureApplication(); MainWindow window;
+    QTimer::singleShot(0,[]() {
+        auto* message=qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        if (!message) { ADD_FAILURE()<<"Missing cut requirement"; return; }
+        EXPECT_TRUE(message->text().contains(QStringLiteral("实体")));
+        message->accept();
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionExtrudeCut_triggered",Qt::DirectConnection));
+    EXPECT_FALSE(hasFeature(window,"ExtrudeCut001"));
+}
+
+TEST(PointPlacementUiTest, ButtonCommitsXYZAsOneUndoAndEscapeCancels)
+{
+    ensureApplication(); MainWindow window;
+    QTimer::singleShot(0,[]() {
+        auto* dialog=qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) { ADD_FAILURE()<<"Missing sketch dialog"; return; }
+        dialog->accept();
+    });
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window,"on_actionNewCircleSketch_triggered",Qt::DirectConnection));
+    auto* viewport=window.findChild<forge::ui::Viewport3D*>();
+    ASSERT_NE(viewport,nullptr);
+    auto* button=window.findChild<QPushButton*>("pickPositionButton");
+    ASSERT_NE(button,nullptr);
+    button->click(); EXPECT_TRUE(viewport->isPickingPoint());
+    // 不初始化 OpenGL，模拟视口拾取结果来验证文档、属性和历史接线。
+    emit viewport->pointPicked(10,12,20);
+    QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+    EXPECT_DOUBLE_EQ(window.findChild<QDoubleSpinBox*>("x")->value(),10);
+    EXPECT_DOUBLE_EQ(window.findChild<QDoubleSpinBox*>("y")->value(),12);
+    EXPECT_DOUBLE_EQ(window.findChild<QDoubleSpinBox*>("z")->value(),20);
+    window.findChild<QAction*>("actionUndo")->trigger();
+    QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+    EXPECT_DOUBLE_EQ(window.findChild<QDoubleSpinBox*>("x")->value(),0);
+    EXPECT_DOUBLE_EQ(window.findChild<QDoubleSpinBox*>("y")->value(),0);
+    EXPECT_DOUBLE_EQ(window.findChild<QDoubleSpinBox*>("z")->value(),0);
+    window.findChild<QAction*>("actionRedo")->trigger();
+    QCoreApplication::sendPostedEvents(nullptr,QEvent::DeferredDelete);
+    EXPECT_DOUBLE_EQ(window.findChild<QDoubleSpinBox*>("z")->value(),20);
+    window.findChild<QPushButton*>("pickPositionButton")->click();
+    EXPECT_TRUE(viewport->isPickingPoint());
+    QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);
+    QCoreApplication::sendEvent(viewport,&escape);
+    EXPECT_FALSE(viewport->isPickingPoint());
+    emit viewport->pointPicked(1,2,3);
+    EXPECT_DOUBLE_EQ(window.findChild<QDoubleSpinBox*>("z")->value(),20);
 }

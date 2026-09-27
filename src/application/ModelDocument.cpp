@@ -2,10 +2,14 @@
 
 #include "domain/Feature.h" // 析构、读取参数和调用虚函数都需要完整 Feature 定义。
 #include "domain/ImportedFeature.h"
+#include "domain/ExtrudeFeature.h"
+#include "domain/ExtrudeCutFeature.h"
 #include "geometry/ShapeFactory.h"
 #include <BRepBuilderAPI_Copy.hxx>
 #include "domain/BooleanFeature.h" // 创建和恢复 Cut/Union/Intersection 特征。
-
+#include <QUuid>
+#include <regex>
+#include <limits>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <Standard_Failure.hxx>
@@ -17,6 +21,7 @@
 #include <stdexcept> // invalid_argument 报告不存在对象和非法业务参数。
 #include <utility>   // std::move 转移 unique_ptr 和快照容器，避免深复制。
 #include <unordered_set> // 收集被布尔特征使用、需要隐藏的输入 ID。
+#include <BRepTools.hxx>
 
 namespace forge::application {
 
@@ -34,6 +39,11 @@ namespace forge::application {
 
     } // namespace
 
+    ModelDocument::ModelDocument()
+    : documentId_(
+          QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString())
+    {
+    }
     // 析构放在 .cpp，此处 Feature 已是完整类型，unique_ptr 才能正确实例化删除逻辑。
     ModelDocument::~ModelDocument() = default;
 
@@ -108,12 +118,66 @@ namespace forge::application {
         return *features_.back();
     }
 
+    domain::Feature& ModelDocument::createExtrudeFeature(std::string_view sketchId, double height, domain::ExtrudeDirection direction)
+    {
+        const auto* sketch = findFeature(sketchId);
+        if (!sketch || (sketch->type() != "RectangleSketch" && sketch->type() != "CircleSketch"))
+            throw std::invalid_argument("拉伸需要一个现有矩形草图或圆形草图");
+        const auto* rule = domain::FeatureRegistry::findParameter("Extrude","height");
+        if (!std::isfinite(height) || height < rule->minimum || height > rule->maximum)
+            throw std::invalid_argument("拉伸高度须在 1 到 10000 mm 之间");
+        if (direction != domain::ExtrudeDirection::Forward && direction != domain::ExtrudeDirection::Reverse &&
+            direction != domain::ExtrudeDirection::Symmetric)
+            throw std::invalid_argument("未知拉伸方向");
+        auto feature = std::make_unique<domain::ExtrudeFeature>(nextFeatureId("Extrude"),height,direction);
+        auto graph = dependencyGraph_;
+        graph.addNode(feature->id());
+        if (!graph.addDependency(feature->id(),std::string(sketchId)))
+            throw std::logic_error("无法登记拉伸草图依赖");
+        auto before = captureState();
+        features_.push_back(std::move(feature));
+        dependencyGraph_ = std::move(graph);
+        rememberBeforeChange(std::move(before));
+        return *features_.back();
+    }
+
+    domain::Feature& ModelDocument::createExtrudeCutFeature(std::string_view baseId,
+        std::string_view sketchId, double height, domain::ExtrudeDirection direction)
+    {
+        const auto* sketch=findFeature(sketchId);
+        if (baseId==sketchId || !findFeature(baseId) || !sketch ||
+            (sketch->type()!="RectangleSketch" && sketch->type()!="CircleSketch"))
+            throw std::invalid_argument("请选择实体主体和矩形或圆形草图");
+        const auto* rule=domain::FeatureRegistry::findParameter("ExtrudeCut","height");
+        if (!std::isfinite(height) || height<rule->minimum || height>rule->maximum)
+            throw std::invalid_argument("切除高度须在 1 到 10000 mm 之间");
+        domain::ExtrudeCutFeature candidate("",height,direction);
+        const auto error=candidate.validate();
+        if (!error.empty()) throw std::invalid_argument(error);
+        const auto report=rebuildReport();
+        const auto checked=candidate.rebuildResult({report.at(std::string(baseId)).shape,report.at(std::string(sketchId)).shape});
+        if (!checked.usable()) throw std::invalid_argument(checked.message);
+        auto feature=std::make_unique<domain::ExtrudeCutFeature>(nextFeatureId("ExtrudeCut"),height,direction);
+        auto graph=dependencyGraph_;
+        graph.addNode(feature->id());
+        if (!graph.addDependency(feature->id(),std::string(baseId)) ||
+            !graph.addDependency(feature->id(),std::string(sketchId)))
+            throw std::logic_error("无法登记拉伸切除依赖");
+        auto before=captureState();
+        features_.push_back(std::move(feature));
+        dependencyGraph_=std::move(graph);
+        rememberBeforeChange(std::move(before));
+        return *features_.back();
+    }
+
     void ModelDocument::addDependency(
         std::string_view featureId, std::string_view dependsOnId)
     {
         // 布尔特征的两个输入在创建时固定；额外依赖会破坏 base/tool 的位置。
-        if (dynamic_cast<const domain::BooleanFeature*>(findFeature(featureId))) {
-            throw std::invalid_argument("布尔特征的输入只能在创建时指定");
+        if (dynamic_cast<const domain::BooleanFeature*>(findFeature(featureId)) ||
+            dynamic_cast<const domain::ExtrudeFeature*>(findFeature(featureId)) ||
+            dynamic_cast<const domain::ExtrudeCutFeature*>(findFeature(featureId))) {
+            throw std::invalid_argument("此特征的输入只能在创建时指定");
         }
         // 图负责拒绝未知节点、重复关系和循环；失败时文档与历史都保持原样。
         DocumentState before = captureState();
@@ -145,6 +209,8 @@ namespace forge::application {
                 feature->type() + " 参数超出范围: " + std::string(parameterName));
         }
 
+        for (const auto& parameter : feature->parameters())
+            if (parameter.name() == parameterName && parameter.asDouble() == value) return;
         // 先保存旧状态，后续领域校验意外失败时可以完整回滚。
         DocumentState before = captureState();
         feature->setParameter(std::string(parameterName), value);
@@ -155,6 +221,32 @@ namespace forge::application {
         }
 
         // 修改成功后旧状态成为一次可撤销记录，并废弃旧的 Redo 分支。
+        rememberBeforeChange(std::move(before));
+    }
+
+    void ModelDocument::setPosition(std::string_view featureId, double x, double y, double z)
+    {
+        auto* feature=findFeature(featureId);
+        if (!feature) throw std::invalid_argument("找不到定位对象");
+        const domain::NumericParameters values{{"x",x},{"y",y},{"z",z}};
+        bool changed=false;
+        for (const auto& [name,value] : values) {
+            const auto* rule=domain::FeatureRegistry::findParameter(feature->type(),name);
+            if (!rule || !std::isfinite(value) || value<rule->minimum || value>rule->maximum)
+                throw std::invalid_argument("对象不支持定位或位置超出范围");
+            for (const auto& parameter : feature->parameters())
+                if (parameter.name()==name && parameter.asDouble()!=value) changed=true;
+        }
+        if (!changed) return;
+        auto before=captureState();
+        try {
+            for (const auto& [name,value] : values) feature->setParameter(name,value);
+            const auto error=feature->validate();
+            if (!error.empty()) throw std::invalid_argument(error);
+        } catch (...) {
+            restoreState(before);
+            throw;
+        }
         rememberBeforeChange(std::move(before));
     }
 
@@ -339,7 +431,9 @@ namespace forge::application {
     {
         std::unordered_set<std::string> consumed;
         for (const auto& feature : features_) {
-            if (dynamic_cast<const domain::BooleanFeature*>(feature.get())) {
+            if (dynamic_cast<const domain::BooleanFeature*>(feature.get()) ||
+                dynamic_cast<const domain::ExtrudeFeature*>(feature.get()) ||
+                dynamic_cast<const domain::ExtrudeCutFeature*>(feature.get())) {
                 for (const auto& id : dependencyGraph_.dependenciesOf(feature->id())) consumed.insert(id);
             }
         }
@@ -351,7 +445,9 @@ namespace forge::application {
             if (result.usable()) {
                 // 合法空结果继续隐藏输入，不能把空交集伪装成输入模型。
                 visible.insert(id);
-            } else if (dynamic_cast<const domain::BooleanFeature*>(findFeature(id))) {
+            } else if (dynamic_cast<const domain::BooleanFeature*>(findFeature(id)) ||
+                       dynamic_cast<const domain::ExtrudeFeature*>(findFeature(id)) ||
+                       dynamic_cast<const domain::ExtrudeCutFeature*>(findFeature(id))) {
                 for (const auto& input : dependencyGraph_.dependenciesOf(id)) expose(input);
             }
         };
@@ -359,6 +455,157 @@ namespace forge::application {
         std::vector<std::string> ordered;
         for (const auto& feature : features_) if (visible.contains(feature->id())) ordered.push_back(feature->id());
         return ordered;
+    }
+
+    DocumentData ModelDocument::exportData() const {
+        DocumentData data;
+        data.documentId = documentId_;
+        data.sequences = sequenceByType_;
+        data.features.reserve(features_.size());
+
+        for (const auto& feature : features_) {
+            FeatureData item;
+            item.id = feature->id();
+            item.type = feature->type();
+
+            // 保存所有数值参数，包括位置。
+            for (const auto& parameter : feature->parameters()) {
+                item.parameters.emplace(parameter.name(), parameter.asDouble());
+            }
+
+            // 保留依赖顺序：布尔运算的主体在前、工具在后。
+            item.dependencies =
+                dependencyGraph_.dependenciesOf(feature->id());
+
+            if (const auto* imported =
+                    dynamic_cast<const domain::ImportedFeature*>(feature.get())) {
+                item.sourceName = imported->sourceName();
+                item.geometryAsset = "shapes/" + item.id + ".brep";
+
+                const auto& geometry = imported->geometry();
+                if (!geometry || geometry->IsNull()) {
+                    throw std::runtime_error("导入特征缺少原始几何");
+                }
+
+                std::ostringstream stream;
+                BRepTools::Write(*geometry, stream);
+                if (!stream || stream.str().empty()) {
+                    throw std::runtime_error("导入几何编码失败");
+                }
+
+                data.geometryAssets.emplace(item.geometryAsset, stream.str());
+                    }
+
+            data.features.push_back(std::move(item));
+        }
+
+        return data;
+    }
+
+    void ModelDocument::replaceData(const DocumentData& data)
+    {
+        if (data.version != 1 || data.units != "mm" ||
+            QUuid(QString::fromStdString(data.documentId)).isNull() || data.features.size() > 10000)
+            throw std::invalid_argument("文档版本、单位或身份无效");
+        DocumentState state;
+        std::unordered_set<std::string> usedAssets;
+        const std::unordered_set<std::string> types{"Box","Cylinder","Sphere","Cut","Union","Intersection","Imported","RectangleSketch","CircleSketch","Extrude","ExtrudeCut"};
+        for (const auto& [type,n] : data.sequences)
+            if (!types.contains(type) || n < 0 || n >= std::numeric_limits<int>::max())
+                throw std::invalid_argument("特征编号计数无效");
+        std::unordered_set<std::string> ids;
+        for (const auto& f : data.features) {
+            if (!types.contains(f.type) || f.version != 1 || !ids.insert(f.id).second ||
+                f.id.size() > 64 || !std::regex_match(f.id,std::regex(f.type + "[0-9]{3,}")))
+                throw std::invalid_argument("特征类型、版本或 ID 无效");
+            const auto suffix = f.id.substr(f.type.size());
+            const auto number = std::stoll(suffix);
+            if (number < 1 || !data.sequences.contains(f.type) || number > data.sequences.at(f.type))
+                throw std::invalid_argument("特征编号计数落后于现有 ID");
+            state.graph.addNode(f.id);
+            FeatureState saved{f.id,f.type,f.parameters};
+            if (f.type == "Imported") {
+                if (f.geometryAsset != "shapes/" + f.id + ".brep" || !data.geometryAssets.contains(f.geometryAsset) ||
+                    !usedAssets.insert(f.geometryAsset).second || f.parameters.size() != 3)
+                    throw std::invalid_argument("导入几何资源或位置参数无效");
+                for (const auto* name : {"x","y","z"}) {
+                    const auto* descriptor = domain::FeatureRegistry::findParameter("Imported",name);
+                    const auto value = f.parameters.at(name);
+                    if (!std::isfinite(value) || value < descriptor->minimum || value > descriptor->maximum)
+                        throw std::invalid_argument("导入位置超出范围");
+                }
+                const auto& bytes = data.geometryAssets.at(f.geometryAsset);
+                if (bytes.size() > 64 * 1024 * 1024) throw std::invalid_argument("几何资源过大");
+                std::istringstream stream(bytes);
+                TopoDS_Shape shape;
+                BRepTools::Read(shape,stream,BRep_Builder());
+                if (stream.fail() || geometry::ShapeFactory::inspectShape(shape).status != core::RebuildStatus::Ready)
+                    throw std::invalid_argument("导入 BRep 无效");
+                saved.importedGeometry = std::make_shared<const TopoDS_Shape>(shape);
+                saved.sourceName = f.sourceName;
+            } else {
+                if (!f.geometryAsset.empty() || !f.sourceName.empty()) throw std::invalid_argument("非导入特征不能包含几何资源");
+                const bool boolean = f.type == "Cut" || f.type == "Union" || f.type == "Intersection";
+                if (f.type == "Extrude" || f.type == "ExtrudeCut") {
+                    const bool cut=f.type=="ExtrudeCut";
+                    if (f.dependencies.size() != (cut ? 2u : 1u) || !f.parameters.contains("height") ||
+                        f.parameters.size() != (f.parameters.contains("direction") ? 2u : 1u))
+                        throw std::invalid_argument("拉伸必须包含一个草图输入和高度参数");
+                    const auto input = std::find_if(data.features.begin(),data.features.end(),
+                        [&](const auto& other) { return other.id == f.dependencies[cut ? 1 : 0]; });
+                    if (input == data.features.end() || (input->type != "RectangleSketch" && input->type != "CircleSketch"))
+                        throw std::invalid_argument("拉伸输入必须是矩形草图或圆形草图");
+                    if (cut) {
+                        const auto base=std::find_if(data.features.begin(),data.features.end(),
+                            [&](const auto& other) { return other.id==f.dependencies[0]; });
+                        if (base==data.features.end() || base->type=="RectangleSketch" || base->type=="CircleSketch")
+                            throw std::invalid_argument("拉伸切除主体必须是实体特征");
+                    }
+                    const auto* rule = domain::FeatureRegistry::findParameter("Extrude","height");
+                    const auto height = f.parameters.at("height");
+                    if (!std::isfinite(height) || height < rule->minimum || height > rule->maximum)
+                        throw std::invalid_argument("拉伸高度超出范围");
+                    const auto direction = f.parameters.contains("direction") ? f.parameters.at("direction") : 0.0;
+                    if (direction != 0.0 && direction != 1.0 && direction != 2.0)
+                        throw std::invalid_argument("未知拉伸方向");
+                } else if (boolean) {
+                    if (!f.parameters.empty() || f.dependencies.size() != 2) throw std::invalid_argument("布尔定义无效");
+                } else {
+                    const auto* descriptor = domain::FeatureRegistry::find(f.type);
+                    // 旧版本草图没有 Z；保持原来的 Z=0，其他字段仍严格校验。
+                    if ((f.type=="RectangleSketch" || f.type=="CircleSketch") && !saved.parameters.contains("z"))
+                        saved.parameters["z"]=0;
+                    if (saved.parameters.size() != descriptor->parameters.size()) throw std::invalid_argument("缺少完整特征参数");
+                    domain::FeatureRegistry::create(f.type,f.id,saved.parameters);
+                }
+            }
+            state.features.push_back(std::move(saved));
+        }
+        if (usedAssets.size() != data.geometryAssets.size()) throw std::invalid_argument("存在未引用几何资源");
+        for (const auto& f : data.features)
+            for (const auto& input : f.dependencies)
+                if (!state.graph.addDependency(f.id,input)) throw std::invalid_argument("依赖缺失、重复或形成循环");
+        // 所有可能分配内存的准备工作在替换前完成。
+        auto sequences = data.sequences;
+        auto identity = data.documentId;
+        restoreState(state);
+        sequenceByType_.swap(sequences);
+        documentId_.swap(identity);
+        undoStack_.clear(); redoStack_.clear();
+        revision_ = nextRevision_++;
+        savedRevision_ = revision_;
+    }
+
+    void ModelDocument::swap(ModelDocument& other) noexcept
+    {
+        features_.swap(other.features_);
+        std::swap(dependencyGraph_,other.dependencyGraph_);
+        sequenceByType_.swap(other.sequenceByType_);
+        undoStack_.swap(other.undoStack_); redoStack_.swap(other.redoStack_);
+        documentId_.swap(other.documentId_);
+        std::swap(revision_,other.revision_);
+        std::swap(savedRevision_,other.savedRevision_);
+        std::swap(nextRevision_,other.nextRevision_);
     }
 
     std::string ModelDocument::nextFeatureId(std::string_view type)
@@ -379,6 +626,7 @@ namespace forge::application {
     {
         // 深拷贝的是轻量字符串和数值，不复制 unique_ptr，也不计算 OCCT Shape。
         DocumentState state;
+        state.revision = revision_;
         state.features.reserve(features_.size()); // 已知最终项数，预留空间避免 push 时重复扩容。
         for (const auto& feature : features_) {
             FeatureState saved{feature->id(), feature->type(), {}};
@@ -407,6 +655,14 @@ namespace forge::application {
             if (saved.type == "Imported") {
                 restored.push_back(std::make_unique<domain::ImportedFeature>(saved.id, saved.importedGeometry,
                     saved.sourceName, saved.parameters.at("x"), saved.parameters.at("y"), saved.parameters.at("z")));
+            } else if (saved.type == "ExtrudeCut") {
+                const double direction=saved.parameters.contains("direction") ? saved.parameters.at("direction") : 0.0;
+                restored.push_back(std::make_unique<domain::ExtrudeCutFeature>(saved.id,saved.parameters.at("height"),
+                    static_cast<domain::ExtrudeDirection>(static_cast<int>(direction))));
+            } else if (saved.type == "Extrude") {
+                const double direction = saved.parameters.contains("direction") ? saved.parameters.at("direction") : 0.0;
+                restored.push_back(std::make_unique<domain::ExtrudeFeature>(saved.id,saved.parameters.at("height"),
+                    static_cast<domain::ExtrudeDirection>(static_cast<int>(direction))));
             } else if (saved.type == "Cut") {
                 restored.push_back(std::make_unique<domain::BooleanFeature>(
                     saved.id, domain::BooleanOperation::Difference));
@@ -428,6 +684,7 @@ namespace forge::application {
         // 两份数据都准备好后，再替换文档当前状态。
         features_ = std::move(restored);
         dependencyGraph_ = std::move(restoredGraph);
+        revision_ = state.revision;
     }
 
     void ModelDocument::rememberBeforeChange(DocumentState state)
@@ -435,6 +692,7 @@ namespace forge::application {
         // 用户在 Undo 后做出新修改时，旧 Redo 分支已经不再属于当前时间线。
         undoStack_.push_back(std::move(state)); // vector 末尾作为最新可撤销状态。
         redoStack_.clear(); // 新操作形成新时间线，旧 Redo 路径不再有效。
+        revision_ = nextRevision_++;
     }
 
 } // namespace forge::application

@@ -19,7 +19,20 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Common.hxx>
-
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <gp_Circ.hxx>
+#include <gp_Ax2.hxx>
+#include <gp_Dir.hxx>
+#include <TopoDS_Wire.hxx>
+#include <gp_Pnt.hxx>
+#include <Precision.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopoDS_Iterator.hxx>
 namespace forge::geometry {
 
 // ------------------------------------------------------------
@@ -172,6 +185,19 @@ TopoDS_Shape ShapeFactory::translate(const TopoDS_Shape& shape, double x, double
 }
 
 
+bool ShapeFactory::isSolidBody(const TopoDS_Shape& shape)
+{
+    if (inspectShape(shape).status != core::RebuildStatus::Ready) return false;
+    if (shape.ShapeType() == TopAbs_SOLID) return true;
+    if (shape.ShapeType() != TopAbs_COMPOUND && shape.ShapeType() != TopAbs_COMPSOLID) return false;
+    bool hasChild = false;
+    for (TopoDS_Iterator it(shape); it.More(); it.Next()) {
+        hasChild = true;
+        if (!isSolidBody(it.Value())) return false;
+    }
+    return hasChild;
+}
+
 core::ShapeResult ShapeFactory::inspectShape(const TopoDS_Shape& shape)
 {
     if (shape.IsNull()) return {{}, core::RebuildStatus::Failed, "几何构造失败：没有生成形状"};
@@ -268,5 +294,84 @@ TopoDS_Shape ShapeFactory::booleanUnion(const TopoDS_Shape& base, const TopoDS_S
 TopoDS_Shape ShapeFactory::booleanIntersection(const TopoDS_Shape& base, const TopoDS_Shape& tool)
 {
     return intersectionResult(base, tool).shape;
+}
+
+TopoDS_Shape ShapeFactory::makeRectangleWire(double length, double width) {
+    if (!std::isfinite(length) || !std::isfinite(width) ||
+        length <= Precision::Confusion() ||
+        width <= Precision::Confusion()) {
+        return {};
+        }
+
+    try {
+        BRepBuilderAPI_MakePolygon polygon;
+
+        polygon.Add(gp_Pnt(0,      0,     0));
+        polygon.Add(gp_Pnt(length, 0,     0));
+        polygon.Add(gp_Pnt(length, width, 0));
+        polygon.Add(gp_Pnt(0,      width, 0));
+
+        polygon.Close();
+
+        if (!polygon.IsDone()) return {};
+        return polygon.Wire();
+    } catch (const Standard_Failure&) {
+        return {};
+    }
+}
+
+TopoDS_Shape ShapeFactory::makeCircleWire(double radius) {
+    if (!std::isfinite(radius) ||
+        radius <= Precision::Confusion()) {
+        return {};
+    }
+
+    try {
+        // 法向为 +Z，圆位于 XY 平面；gp_Circ 保留精确曲线，不用折线拟合。
+        const gp_Circ circle(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), radius);
+        BRepBuilderAPI_MakeEdge edge(circle);
+        if (!edge.IsDone()) return {};
+
+        // 完整圆边首尾相接，单条边就能组成闭合 Wire。
+        BRepBuilderAPI_MakeWire maker(edge.Edge());
+        if (!maker.IsDone()) return {};
+        const auto wire = maker.Wire();
+        if (!wire.Closed() || !BRepCheck_Analyzer(wire).IsValid()) return {};
+        return wire;
+    } catch (const Standard_Failure&) {
+        return {};
+    }
+}
+
+TopoDS_Shape ShapeFactory::extrudeWire(const TopoDS_Shape& profile, double height)
+{
+    if (profile.IsNull() || profile.ShapeType() != TopAbs_WIRE ||
+        !std::isfinite(height) || std::abs(height) <= Precision::Confusion()) {
+        return {};
+        }
+
+    try {
+        const auto wire = TopoDS::Wire(profile);
+        if (!wire.Closed()) return {};
+
+        // true 表示只允许生成平面。
+        BRepBuilderAPI_MakeFace face(wire, true);
+        if (!face.IsDone()) return {};
+
+        // 将面沿 Z 轴正方向移动 height，扫出实体。
+        BRepPrimAPI_MakePrism prism(
+            face.Face(), gp_Vec(0, 0, height));
+
+        const auto solid = prism.Shape();
+
+        if (solid.IsNull() || solid.ShapeType() != TopAbs_SOLID ||
+            !BRepCheck_Analyzer(solid).IsValid()) {
+            return {};
+            }
+
+        return solid;
+    } catch (const Standard_Failure&) {
+        return {};
+    }
 }
 } // namespace forge::geometry

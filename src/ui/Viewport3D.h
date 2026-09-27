@@ -24,6 +24,8 @@
 #include <V3d_Viewer.hxx>             // 3D 场景：容纳多个 View
 #include <TopoDS_Shape.hxx>           // OCCT 形状类型（Box 等）
 #include <AIS_Shape.hxx>              // OCCT 显示对象（形状的包装）
+#include <AIS_Point.hxx>
+#include "geometry/PointPicker.h"
 
 
 namespace forge::ui {
@@ -46,10 +48,16 @@ public:
 
     // 视角：让模型"恰好装满"屏幕（W4 完善）
     void fitAll();
+    void beginPointPick(double planeZ, int excludedIndex = -1);
+    void cancelPointPick();
+    bool isPickingPoint() const { return pickingPoint_; }
 
 signals:
     // 用户在 3D 视口中点击对象；-1 表示点击空白并清除选择。
     void shapeSelected(int index);
+    void pointPicked(double x, double y, double z);
+    void pointPickCancelled();
+    void pointPreview(double x, double y, double z, bool onSurface);
 
 protected:
     // 以下都是 QWidget 的"事件回调"，重写它们让 OCCT 视图跟随窗口变化
@@ -61,6 +69,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override; // 鼠标释放/完成点击选择
     void leaveEvent(QEvent*) override;             // 鼠标离开时清除预选高亮
     void wheelEvent(QWheelEvent*) override;        // 滚轮
+    void keyPressEvent(QKeyEvent*) override;
 
 private:
     void initViewer();    // 初始化 OCCT 3D 场景（窗口显示后调一次）
@@ -70,6 +79,12 @@ private:
     QPoint lastMousePosition_;       // 平移时计算相邻鼠标事件的位移量。
     bool rotating_ = false;          // 中键拖动且未按 Shift 时为 true。
     bool panning_ = false;           // Shift+中键拖动期间为 true。
+    bool pickingPoint_ = false;
+    double pickPlaneZ_ = 0;
+    int excludedPickIndex_ = -1;
+    occ::handle<AIS_Point> pickMarker_;
+    std::optional<geometry::PickedPoint> pointAt(const QPoint& pixel) const;
+    void updatePointPreview(const QPoint& pixel);
 
     // OCCT 的"句柄"（智能指针）——对象生命周期自动管理
     occ::handle<V3d_Viewer>             viewer_;    // 场景容器

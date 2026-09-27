@@ -9,6 +9,7 @@
 #include <StepData_StepModel.hxx>
 #include <DESTEP_Parameters.hxx>
 #include <IFSelect_ReturnStatus.hxx>
+#include <IFSelect_PrintCount.hxx>
 #include <Standard_Failure.hxx>
 
 #include <exception>
@@ -41,13 +42,17 @@ StepImportResult StepIO::importShape(const QString& filePath)
         reader.SetSystemLengthUnit(1.0); // 文件单位可以是英寸等，文档坐标统一转换成毫米。
         const int roots = reader.NbRootsForTransfer();
         if (roots <= 0) return {false, {}, QStringLiteral("STEP 文件没有可导入的几何")};
-        if (reader.TransferRoots() != roots) {
-            return {false, {}, QStringLiteral("部分 STEP 几何转换失败，已取消整个导入")};
-        }
+        const int transferred = reader.TransferRoots();
+        std::ostringstream report;
+        reader.PrintCheckLoad(report,false,IFSelect_ItemsByEntity);
+        reader.PrintCheckTransfer(report,false,IFSelect_ItemsByEntity);
+        const auto diagnostics = QString::fromStdString(report.str()).left(8192);
+        if (transferred != roots)
+            return {false, {}, QStringLiteral("部分 STEP 几何转换失败，已取消整个导入"),roots,transferred,diagnostics};
         const auto result = geometry::ShapeFactory::inspectShape(reader.OneShape());
-        if (!result.usable()) return {false, {}, QString::fromStdString(result.message)};
-        if (result.status == core::RebuildStatus::Empty) return {false, {}, QStringLiteral("STEP 几何为空")};
-        return {true, result.shape, {}};
+        if (!result.usable()) return {false, {}, QString::fromStdString(result.message),roots,transferred,diagnostics};
+        if (result.status == core::RebuildStatus::Empty) return {false, {}, QStringLiteral("STEP 几何为空"),roots,transferred,diagnostics};
+        return {true, result.shape, {},roots,transferred,diagnostics};
     } catch (const Standard_Failure& error) {
         return {false, {}, QStringLiteral("STEP 内核异常：%1").arg(QString::fromUtf8(
             error.GetMessageString() ? error.GetMessageString() : "未知原因"))};
@@ -80,6 +85,7 @@ StepExportResult StepIO::exportShape(
         writer.Model()->SetLocalLengthUnit(1.0);
         DESTEP_Parameters parameters;
         parameters.WriteUnit = UnitsMethods_LengthUnit_Millimeter;
+        parameters.WriteSchema = DESTEP_Parameters::WriteMode_StepSchema_AP242DIS;
 
         // Transfer 只转换几何，还没有写入文件。
         if (writer.Transfer(shape, STEPControl_AsIs, parameters)

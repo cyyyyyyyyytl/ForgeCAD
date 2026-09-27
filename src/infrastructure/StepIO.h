@@ -15,6 +15,9 @@ namespace forge::infrastructure {
         bool success = false;
         TopoDS_Shape shape;
         QString error;
+        int roots = 0;
+        int transferredRoots = 0;
+        QString diagnostics;
     };
 
     class StepIO {

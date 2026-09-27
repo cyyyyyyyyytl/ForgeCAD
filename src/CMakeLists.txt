@@ -21,11 +21,19 @@ add_library(forgecore
     domain/FeatureRegistry.cpp
     domain/DependencyGraph.cpp
     geometry/ShapeFactory.cpp
+    geometry/PointPicker.cpp
     # Viewport3D 可被不同窗口复用，因此放进核心库；MainWindow 不放这里。
     ui/Viewport3D.cpp
     domain/CylinderFeature.cpp
     domain/SphereFeature.cpp
     infrastructure/StepIO.cpp
+    infrastructure/DocumentJson.cpp
+    infrastructure/NativeDocumentIO.cpp
+    infrastructure/ZipArchive.cpp
+    domain/RectangleSketchFeature.cpp
+    domain/CircleSketchFeature.cpp
+    domain/ExtrudeFeature.cpp
+    domain/ExtrudeCutFeature.cpp
 )
 
 # 包含 src 根，便于 #include<core/...>
@@ -33,6 +41,7 @@ target_include_directories(forgecore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # 链接共享依赖
 target_link_libraries(forgecore PUBLIC
+    forgecad_zip
     Qt6::Core               # QObject、QString、JSON、事件循环。
     Qt6::Network            # DeepSeek HTTPS 请求。
     Qt6::Widgets            # Viewport3D 继承 QWidget。

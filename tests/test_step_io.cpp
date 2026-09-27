@@ -239,6 +239,11 @@ TEST(StepImportTest, ChineseFileRoundTripIncludesMultipleSolidsAndPositions)
     const auto imported = StepIO::importShape(path);
     ASSERT_TRUE(imported.success) << imported.error.toStdString();
     EXPECT_TRUE(imported.error.isEmpty());
+    EXPECT_GT(imported.roots,0);
+    EXPECT_EQ(imported.transferredRoots,imported.roots);
+    QFile exported(path);
+    ASSERT_TRUE(exported.open(QIODevice::ReadOnly));
+    EXPECT_TRUE(exported.readAll().contains("AP242"));
     expectEquivalent(source, imported.shape);
 }
 

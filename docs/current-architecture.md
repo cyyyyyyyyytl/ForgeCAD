@@ -148,7 +148,7 @@ MainWindow 在一次刷新中共享同一报告：失败和阻塞节点标红，
 状态不进入快照，修改参数、撤销重做及恢复删除后均重新计算。
 AI 工具额外返回 rebuild_status/rebuild_message，数据写入成功不代表几何生成成功。
 
-原生文件教学从 [native-file-first-steps.md](native-file-first-steps.md) 开始，当前尚未实现保存/打开。
+原生文件设计见 [native-file-first-steps.md](native-file-first-steps.md)，保存/读取、事务式恢复及界面槽已实现，当前接口、格式限制与验证状态见 [native-file-implementation.md](native-file-implementation.md)。
 
 ## STEP 导出：当前教学进度
 
@@ -180,7 +180,7 @@ Registry 仅提供它的位置参数规则，不允许使用数值参数创建�
 导入对象能参与布尔依赖与级联删除，也可随其他最终结果再次导出 STEP。
 
 基本体快照仍保存参数；导入快照额外共享不可变的原始几何，恢复不依赖源文件。
-原生文件将来必须保存这些对象的 B-Rep，而不能只存来源路径或数值参数。
+原生文件已保存这些对象的 B-Rep 资产，不依赖来源路径。
 
 MainWindow::on_actionImportStep_triggered 已实现选择文件、取消、错误提示、文档追加与显示刷新。
 mainwindow.ui 的文件菜单已添加 QAction，objectName 为 actionImportStep，文字为“导入 STEP…”。
