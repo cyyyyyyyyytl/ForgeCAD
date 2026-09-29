@@ -48,6 +48,8 @@ public:
 
     // 视角：让模型"恰好装满"屏幕（W4 完善）
     void fitAll();
+    // AI 使用与鼠标相同的 OCCT 相机接口；未初始化时返回失败。
+    bool controlView(const QString& operation, double first = 0, double second = 0);
     void beginPointPick(double planeZ, int excludedIndex = -1);
     void cancelPointPick();
     bool isPickingPoint() const { return pickingPoint_; }

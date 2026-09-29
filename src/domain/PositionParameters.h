@@ -19,7 +19,9 @@ inline std::string validatePrimitiveParameters(const std::vector<Parameter>& par
     for (const auto& parameter : parameters) {
         const double value = parameter.asDouble();
         if (!std::isfinite(value)) return "参数 " + parameter.name() + " 必须是有限数值";
-        if (isPositionParameter(parameter.name())) {
+        if (parameter.name()=="plane") {
+            if (value<0 || value>2 || std::floor(value)!=value) return "Invalid sketch plane";
+        } else if (isPositionParameter(parameter.name())) {
             if (std::abs(value) > positionLimit) return "位置参数超出范围: " + parameter.name();
         } else if (value <= 0.0) {
             return "参数 " + parameter.name() + " 必须大于 0";

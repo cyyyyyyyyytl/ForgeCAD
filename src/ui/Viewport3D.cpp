@@ -266,6 +266,21 @@ void Viewport3D::resizeEvent(QResizeEvent*)
 }
 
 // 左键选择；中键拖动旋转；Shift+中键拖动平移。
+bool Viewport3D::controlView(const QString& operation, double first, double second)
+{
+    if (!view_) return false;
+    if (operation=="fit") fitAll();
+    else if (operation=="zoom") view_->SetZoom(first);
+    else if (operation=="pan") view_->Pan(static_cast<int>(first),-static_cast<int>(second));
+    else if (operation=="rotate") {
+        const int x=width()/2,y=height()/2;
+        view_->StartRotation(x,y);
+        view_->Rotation(x+static_cast<int>(first),y+static_cast<int>(second));
+    } else return false;
+    view_->Redraw();
+    return true;
+}
+
 void Viewport3D::beginPointPick(double planeZ, int excludedIndex)
 {
     cancelPointPick();

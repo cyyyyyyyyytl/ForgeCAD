@@ -9,17 +9,17 @@ using forge::domain::NumericParameters; // 记录被测具名参数 Map 类型�
 // 验证登记表包含基础体和草图，并能正确描述参数与未知类型。
 TEST(FeatureRegistryTest, DescribesAllSupportedFeatures)
 {
-    EXPECT_EQ(FeatureRegistry::all().size(), 5u); // 三类基础体、矩形和圆形草图。
+    EXPECT_EQ(FeatureRegistry::all().size(), 6u); // 三类基础体、矩形和圆形草图。
     const auto* circle = FeatureRegistry::find("CircleSketch");
     ASSERT_NE(circle, nullptr);
-    ASSERT_EQ(circle->parameters.size(), 4u);
+    ASSERT_EQ(circle->parameters.size(), 5u);
     EXPECT_EQ(circle->parameters[0].name, "radius");
     EXPECT_EQ(circle->parameters[1].name, "x");
     EXPECT_EQ(circle->parameters[2].name, "y");
     EXPECT_EQ(circle->parameters[3].name, "z");
     const auto* sketch = FeatureRegistry::find("RectangleSketch");
     ASSERT_NE(sketch, nullptr);
-    ASSERT_EQ(sketch->parameters.size(), 5u);
+    ASSERT_EQ(sketch->parameters.size(), 6u);
     EXPECT_EQ(sketch->parameters[0].name, "length");
     EXPECT_EQ(sketch->parameters[1].name, "width");
     EXPECT_EQ(sketch->parameters[2].name, "x");

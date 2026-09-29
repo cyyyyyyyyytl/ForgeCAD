@@ -5,6 +5,7 @@
 #include "domain/FeatureRegistry.h" // 公开接口使用 NumericParameters 类型。
 #include "domain/DependencyGraph.h"
 #include "domain/ExtrudeFeature.h"
+#include "domain/RevolveFeature.h"
 #include <TopoDS_Shape.hxx> // rebuildShapes() 返回按特征 ID 索引的 OCCT 形状。
 #include <map>         // 保存“特征类型 -> 已使用序号”的稳定计数器。
 #include <memory>      // unique_ptr 表达文档对每个 Feature 的唯一所有权。
@@ -52,6 +53,9 @@ public:
 
     // 创建特征：自动分配 Box001 形式的 ID，校验后写入文档并记录 Undo。
     domain::Feature& createFeature( const std::string& type,const domain::NumericParameters& parameters);
+    domain::Feature& createAdvancedFeature(const std::string& type,const domain::NumericParameters& parameters,
+        domain::FeatureDefinition definition={},const std::vector<std::string>& inputs={});
+    void setAdvancedDefinition(std::string_view id,const domain::NumericParameters& parameters,domain::FeatureDefinition definition);
     // 已校验的导入几何追加为一个特征，保留已有模型，一次操作可撤销。
     domain::Feature& createImportedFeature(const TopoDS_Shape& shape, const std::string& sourceName);
     // 一个草图输入、正高度与方向；创建和依赖登记只占一次 Undo。
@@ -59,6 +63,8 @@ public:
         domain::ExtrudeDirection direction = domain::ExtrudeDirection::Forward);
     domain::Feature& createExtrudeCutFeature(std::string_view baseId, std::string_view sketchId,
         double height, domain::ExtrudeDirection direction = domain::ExtrudeDirection::Forward);
+    domain::Feature& createRevolveFeature(std::string_view sketchId, double angle,
+        domain::RevolveAxis axis = domain::RevolveAxis::Y);
     // 从两个现有特征创建布尔特征；base 在前、tool 在后，整个创建只占一次 Undo。
     domain::Feature& createBooleanFeature(
         domain::BooleanOperation operation,
@@ -75,6 +81,8 @@ public:
     void deleteFeature(std::string_view featureId);
     // 删除前只读预览：返回依赖者优先、目标最后的全部受影响 ID。
     std::vector<std::string> deletionOrder(std::string_view featureId) const;
+    // 保留输入顺序；供 AI 查询依赖，无需序列化整个文档及 BRep 资产。
+    std::vector<std::string> dependenciesOf(std::string_view featureId) const;
 
     // 历史为空时 undo/redo 安静返回；调用方可先用 canUndo/canRedo 更新按钮状态。
     void undo();
@@ -111,6 +119,7 @@ private:
         domain::NumericParameters parameters; // 重建该对象所需的全部具名数值。
         std::shared_ptr<const TopoDS_Shape> importedGeometry; // 导入对象无法从数值参数再生成。
         std::string sourceName;
+        domain::FeatureDefinition definition;
     };
     // 一个 DocumentState 就是一张“整个文档在某一时刻的照片”。
     struct DocumentState {

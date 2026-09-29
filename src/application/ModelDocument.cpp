@@ -1,4 +1,5 @@
-#include "application/ModelDocument.h" // 类声明、快照类型和 NumericParameters。
+#include "application/ModelDocument.h"
+#include "domain/AdvancedFeature.h" // 类声明、快照类型和 NumericParameters。
 
 #include "domain/Feature.h" // 析构、读取参数和调用虚函数都需要完整 Feature 定义。
 #include "domain/ImportedFeature.h"
@@ -47,11 +48,53 @@ namespace forge::application {
     // 析构放在 .cpp，此处 Feature 已是完整类型，unique_ptr 才能正确实例化删除逻辑。
     ModelDocument::~ModelDocument() = default;
 
+    domain::Feature& ModelDocument::createAdvancedFeature(const std::string& type,
+        const domain::NumericParameters& parameters,domain::FeatureDefinition definition,const std::vector<std::string>& inputs)
+    {
+        const auto n=inputs.size();
+        if (!domain::AdvancedFeature::isType(type) ||
+            (type=="Loft" && (n<2 || n>32)) || (type=="Sweep" && n!=2) ||
+            ((type=="Transform" || type=="Fillet" || type=="Chamfer") && n!=1) ||
+            (!domain::AdvancedFeature::consumesInputs(type) && n!=0)) throw std::invalid_argument("特征类型或输入数量无效");
+        const auto report=rebuildReport(); std::vector<TopoDS_Shape> shapes; std::unordered_set<std::string> unique;
+        for (const auto& id:inputs) {
+            if (!report.contains(id) || !unique.insert(id).second || report.at(id).status!=core::RebuildStatus::Ready)
+                throw std::invalid_argument("输入不存在、重复或重建失败");
+            shapes.push_back(report.at(id).shape);
+        }
+        domain::AdvancedFeature candidate("candidate",type,parameters,definition);
+        const auto checked=candidate.rebuildResult(shapes);
+        if (checked.status!=core::RebuildStatus::Ready) throw std::invalid_argument(checked.message);
+        auto feature=std::make_unique<domain::AdvancedFeature>(nextFeatureId(type),type,parameters,std::move(definition));
+        auto graph=dependencyGraph_; graph.addNode(feature->id());
+        for (const auto& id:inputs) if (!graph.addDependency(feature->id(),id)) throw std::logic_error("无法登记输入");
+        auto before=captureState(); features_.push_back(std::move(feature));dependencyGraph_=std::move(graph);
+        rememberBeforeChange(std::move(before));return *features_.back();
+    }
+
+    void ModelDocument::setAdvancedDefinition(std::string_view id,const domain::NumericParameters& parameters,domain::FeatureDefinition definition)
+    {
+        auto* feature=dynamic_cast<domain::AdvancedFeature*>(findFeature(id));
+        if (!feature) throw std::invalid_argument("此特征没有结构化定义");
+        domain::AdvancedFeature candidate(feature->id(),feature->type(),parameters,definition);
+        const auto report=rebuildReport();std::vector<TopoDS_Shape> shapes;
+        for (const auto& input:dependenciesOf(id)) {
+            if (report.at(input).status!=core::RebuildStatus::Ready) throw std::invalid_argument("上游重建失败");
+            shapes.push_back(report.at(input).shape);
+        }
+        const auto checked=candidate.rebuildResult(shapes);
+        if (checked.status!=core::RebuildStatus::Ready) throw std::invalid_argument(checked.message);
+        auto before=captureState();
+        for (const auto& p:candidate.parameters()) feature->setParameter(p.name(),p.asDouble());
+        feature->setDefinition(std::move(definition));rememberBeforeChange(std::move(before));
+    }
+
     // 创建流程：分配 ID -> Registry 创建对象 -> 领域校验 -> 保存旧状态 -> 加入文档。
     domain::Feature& ModelDocument::createFeature(
         const std::string& type,
         const domain::NumericParameters& parameters)
     {
+        if (type=="Cone") return createAdvancedFeature(type,parameters);
         // ID 由文档统一产生，避免 UI 与 AI 各自编号后发生冲突。
         const std::string id = nextFeatureId(type);
         // Registry 将字符串类型和具名参数转换成具体的 Box/Cylinder/Sphere 对象。
@@ -121,7 +164,7 @@ namespace forge::application {
     domain::Feature& ModelDocument::createExtrudeFeature(std::string_view sketchId, double height, domain::ExtrudeDirection direction)
     {
         const auto* sketch = findFeature(sketchId);
-        if (!sketch || (sketch->type() != "RectangleSketch" && sketch->type() != "CircleSketch"))
+        if (!sketch || (sketch->type() != "RectangleSketch" && sketch->type() != "CircleSketch" && sketch->type() != "ProfileSketch" && sketch->type() != "Transform"))
             throw std::invalid_argument("拉伸需要一个现有矩形草图或圆形草图");
         const auto* rule = domain::FeatureRegistry::findParameter("Extrude","height");
         if (!std::isfinite(height) || height < rule->minimum || height > rule->maximum)
@@ -129,6 +172,9 @@ namespace forge::application {
         if (direction != domain::ExtrudeDirection::Forward && direction != domain::ExtrudeDirection::Reverse &&
             direction != domain::ExtrudeDirection::Symmetric)
             throw std::invalid_argument("未知拉伸方向");
+        const auto report=rebuildReport();domain::ExtrudeFeature candidate("candidate",height,direction);
+        const auto checked=candidate.rebuildResult({report.at(std::string(sketchId)).shape});
+        if (checked.status!=core::RebuildStatus::Ready) throw std::invalid_argument(checked.message);
         auto feature = std::make_unique<domain::ExtrudeFeature>(nextFeatureId("Extrude"),height,direction);
         auto graph = dependencyGraph_;
         graph.addNode(feature->id());
@@ -146,7 +192,7 @@ namespace forge::application {
     {
         const auto* sketch=findFeature(sketchId);
         if (baseId==sketchId || !findFeature(baseId) || !sketch ||
-            (sketch->type()!="RectangleSketch" && sketch->type()!="CircleSketch"))
+            (sketch->type()!="RectangleSketch" && sketch->type()!="CircleSketch" && sketch->type()!="ProfileSketch" && sketch->type()!="Transform"))
             throw std::invalid_argument("请选择实体主体和矩形或圆形草图");
         const auto* rule=domain::FeatureRegistry::findParameter("ExtrudeCut","height");
         if (!std::isfinite(height) || height<rule->minimum || height>rule->maximum)
@@ -170,13 +216,38 @@ namespace forge::application {
         return *features_.back();
     }
 
+    domain::Feature& ModelDocument::createRevolveFeature(std::string_view sketchId, double angle, domain::RevolveAxis axis)
+    {
+        const auto* sketch=findFeature(sketchId);
+        if (!sketch || (sketch->type()!="RectangleSketch" && sketch->type()!="CircleSketch" && sketch->type()!="ProfileSketch" && sketch->type()!="Transform"))
+            throw std::invalid_argument("旋转需要一个现有矩形或圆形草图");
+        const auto* rule=domain::FeatureRegistry::findParameter("Revolve","angle");
+        if (!std::isfinite(angle) || angle<rule->minimum || angle>rule->maximum)
+            throw std::invalid_argument("旋转角度须在 0.001 到 360 度之间");
+        domain::RevolveFeature candidate("",angle,axis);
+        const auto error=candidate.validate();
+        if (!error.empty()) throw std::invalid_argument(error);
+        const auto report=rebuildReport();
+        const auto geometry=candidate.rebuildResult({report.at(std::string(sketchId)).shape});
+        if (!geometry.usable()) throw std::invalid_argument(geometry.message);
+        auto feature=std::make_unique<domain::RevolveFeature>(nextFeatureId("Revolve"),angle,axis);
+        auto graph=dependencyGraph_; graph.addNode(feature->id());
+        if (!graph.addDependency(feature->id(),std::string(sketchId)))
+            throw std::logic_error("无法登记旋转草图依赖");
+        auto before=captureState(); features_.push_back(std::move(feature));
+        dependencyGraph_=std::move(graph); rememberBeforeChange(std::move(before));
+        return *features_.back();
+    }
+
     void ModelDocument::addDependency(
         std::string_view featureId, std::string_view dependsOnId)
     {
         // 布尔特征的两个输入在创建时固定；额外依赖会破坏 base/tool 的位置。
         if (dynamic_cast<const domain::BooleanFeature*>(findFeature(featureId)) ||
             dynamic_cast<const domain::ExtrudeFeature*>(findFeature(featureId)) ||
-            dynamic_cast<const domain::ExtrudeCutFeature*>(findFeature(featureId))) {
+            dynamic_cast<const domain::ExtrudeCutFeature*>(findFeature(featureId)) ||
+            dynamic_cast<const domain::RevolveFeature*>(findFeature(featureId)) ||
+            dynamic_cast<const domain::AdvancedFeature*>(findFeature(featureId))) {
             throw std::invalid_argument("此特征的输入只能在创建时指定");
         }
         // 图负责拒绝未知节点、重复关系和循环；失败时文档与历史都保持原样。
@@ -189,6 +260,12 @@ namespace forge::application {
     }
 
     // 参数修改流程：定位对象 -> 查参数规则 -> 保存旧状态 -> 修改 -> 领域校验。
+    std::vector<std::string> ModelDocument::dependenciesOf(std::string_view featureId) const
+    {
+        if (!findFeature(featureId)) throw std::invalid_argument("找不到依赖查询对象");
+        return dependencyGraph_.dependenciesOf(std::string(featureId));
+    }
+
     void ModelDocument::setParameter(std::string_view featureId,std::string_view parameterName,double value)
     {
         // 稳定 ID 是 UI、AI、历史恢复共同使用的对象身份。
@@ -433,7 +510,8 @@ namespace forge::application {
         for (const auto& feature : features_) {
             if (dynamic_cast<const domain::BooleanFeature*>(feature.get()) ||
                 dynamic_cast<const domain::ExtrudeFeature*>(feature.get()) ||
-                dynamic_cast<const domain::ExtrudeCutFeature*>(feature.get())) {
+                dynamic_cast<const domain::ExtrudeCutFeature*>(feature.get()) ||
+                dynamic_cast<const domain::RevolveFeature*>(feature.get()) || domain::AdvancedFeature::consumesInputs(feature->type())) {
                 for (const auto& id : dependencyGraph_.dependenciesOf(feature->id())) consumed.insert(id);
             }
         }
@@ -447,7 +525,8 @@ namespace forge::application {
                 visible.insert(id);
             } else if (dynamic_cast<const domain::BooleanFeature*>(findFeature(id)) ||
                        dynamic_cast<const domain::ExtrudeFeature*>(findFeature(id)) ||
-                       dynamic_cast<const domain::ExtrudeCutFeature*>(findFeature(id))) {
+                       dynamic_cast<const domain::ExtrudeCutFeature*>(findFeature(id)) ||
+                       dynamic_cast<const domain::RevolveFeature*>(findFeature(id)) || domain::AdvancedFeature::consumesInputs(findFeature(id)->type())) {
                 for (const auto& input : dependencyGraph_.dependenciesOf(id)) expose(input);
             }
         };
@@ -496,6 +575,7 @@ namespace forge::application {
                 data.geometryAssets.emplace(item.geometryAsset, stream.str());
                     }
 
+            if (const auto* advanced=dynamic_cast<const domain::AdvancedFeature*>(feature.get())) item.definition=advanced->definition();
             data.features.push_back(std::move(item));
         }
 
@@ -509,7 +589,7 @@ namespace forge::application {
             throw std::invalid_argument("文档版本、单位或身份无效");
         DocumentState state;
         std::unordered_set<std::string> usedAssets;
-        const std::unordered_set<std::string> types{"Box","Cylinder","Sphere","Cut","Union","Intersection","Imported","RectangleSketch","CircleSketch","Extrude","ExtrudeCut"};
+        const std::unordered_set<std::string> types{"Box","Cylinder","Sphere","Cut","Union","Intersection","Imported","RectangleSketch","CircleSketch","Extrude","ExtrudeCut","Revolve","Cone","ProfileSketch","Path3D","Transform","Fillet","Chamfer","Sweep","Loft"};
         for (const auto& [type,n] : data.sequences)
             if (!types.contains(type) || n < 0 || n >= std::numeric_limits<int>::max())
                 throw std::invalid_argument("特征编号计数无效");
@@ -524,6 +604,8 @@ namespace forge::application {
                 throw std::invalid_argument("特征编号计数落后于现有 ID");
             state.graph.addNode(f.id);
             FeatureState saved{f.id,f.type,f.parameters};
+            saved.definition=f.definition;
+            if (!domain::AdvancedFeature::isType(f.type) && !f.definition.empty()) throw std::invalid_argument("Unexpected structured definition");
             if (f.type == "Imported") {
                 if (f.geometryAsset != "shapes/" + f.id + ".brep" || !data.geometryAssets.contains(f.geometryAsset) ||
                     !usedAssets.insert(f.geometryAsset).second || f.parameters.size() != 3)
@@ -546,14 +628,22 @@ namespace forge::application {
             } else {
                 if (!f.geometryAsset.empty() || !f.sourceName.empty()) throw std::invalid_argument("非导入特征不能包含几何资源");
                 const bool boolean = f.type == "Cut" || f.type == "Union" || f.type == "Intersection";
-                if (f.type == "Extrude" || f.type == "ExtrudeCut") {
+                if (domain::AdvancedFeature::isType(f.type)) {
+                    const auto n=f.dependencies.size();
+                    if ((f.type=="Loft" && (n<2 || n>32)) || (f.type=="Sweep" && n!=2) ||
+                        ((f.type=="Transform" || f.type=="Fillet" || f.type=="Chamfer") && n!=1) ||
+                        (!domain::AdvancedFeature::consumesInputs(f.type) && n!=0)) throw std::invalid_argument("Advanced input count invalid");
+                    domain::AdvancedFeature candidate(f.id,f.type,f.parameters,f.definition);
+                    saved.parameters.clear();
+                    for (const auto& p:candidate.parameters()) saved.parameters.emplace(p.name(),p.asDouble());
+                } else if (f.type == "Extrude" || f.type == "ExtrudeCut") {
                     const bool cut=f.type=="ExtrudeCut";
                     if (f.dependencies.size() != (cut ? 2u : 1u) || !f.parameters.contains("height") ||
                         f.parameters.size() != (f.parameters.contains("direction") ? 2u : 1u))
                         throw std::invalid_argument("拉伸必须包含一个草图输入和高度参数");
                     const auto input = std::find_if(data.features.begin(),data.features.end(),
                         [&](const auto& other) { return other.id == f.dependencies[cut ? 1 : 0]; });
-                    if (input == data.features.end() || (input->type != "RectangleSketch" && input->type != "CircleSketch"))
+                    if (input == data.features.end() || (input->type != "RectangleSketch" && input->type != "CircleSketch" && input->type != "ProfileSketch" && input->type != "Transform"))
                         throw std::invalid_argument("拉伸输入必须是矩形草图或圆形草图");
                     if (cut) {
                         const auto base=std::find_if(data.features.begin(),data.features.end(),
@@ -568,6 +658,26 @@ namespace forge::application {
                     const auto direction = f.parameters.contains("direction") ? f.parameters.at("direction") : 0.0;
                     if (direction != 0.0 && direction != 1.0 && direction != 2.0)
                         throw std::invalid_argument("未知拉伸方向");
+                } else if (f.type=="Revolve") {
+                    if (f.dependencies.size()!=1 ||
+                        !f.parameters.contains("angle") || !f.parameters.contains("axis"))
+                        throw std::invalid_argument("旋转定义必须包含一个草图输入、角度和旋转轴");
+                    const auto input=std::find_if(data.features.begin(),data.features.end(),
+                        [&](const auto& other) { return other.id==f.dependencies[0]; });
+                    if (input==data.features.end() || (input->type!="RectangleSketch" && input->type!="CircleSketch" && input->type!="ProfileSketch" && input->type!="Transform"))
+                        throw std::invalid_argument("旋转输入必须是草图");
+                    const auto angle=f.parameters.at("angle"), axis=f.parameters.at("axis");
+                    const auto* rule=domain::FeatureRegistry::findParameter("Revolve","angle");
+                    if (!std::isfinite(angle) || angle<rule->minimum || angle>rule->maximum || (axis!=0 && axis!=1 && axis!=2))
+                        throw std::invalid_argument("旋转角度或轴无效");
+                    // 兼容旧文件只有 angle/axis；可选的结果平移缺省为0，未知字段仍拒绝。
+                    for (const auto& [name,value] : f.parameters) {
+                        const auto* descriptor=domain::FeatureRegistry::findParameter("Revolve",name);
+                        if (!descriptor || !std::isfinite(value) || value<descriptor->minimum || value>descriptor->maximum)
+                            throw std::invalid_argument("旋转参数无效: " + name);
+                    }
+                    for (const auto* name : {"x","y","z"})
+                        if (!saved.parameters.contains(name)) saved.parameters[name]=0;
                 } else if (boolean) {
                     if (!f.parameters.empty() || f.dependencies.size() != 2) throw std::invalid_argument("布尔定义无效");
                 } else {
@@ -575,6 +685,7 @@ namespace forge::application {
                     // 旧版本草图没有 Z；保持原来的 Z=0，其他字段仍严格校验。
                     if ((f.type=="RectangleSketch" || f.type=="CircleSketch") && !saved.parameters.contains("z"))
                         saved.parameters["z"]=0;
+                    if ((f.type=="RectangleSketch" || f.type=="CircleSketch") && !saved.parameters.contains("plane")) saved.parameters["plane"]=0;
                     if (saved.parameters.size() != descriptor->parameters.size()) throw std::invalid_argument("缺少完整特征参数");
                     domain::FeatureRegistry::create(f.type,f.id,saved.parameters);
                 }
@@ -638,6 +749,7 @@ namespace forge::application {
                 saved.importedGeometry = imported->geometry();
                 saved.sourceName = imported->sourceName();
             }
+            if (const auto* advanced=dynamic_cast<const domain::AdvancedFeature*>(feature.get())) saved.definition=advanced->definition();
             state.features.push_back(std::move(saved)); // 移入快照并保留与当前文档一致的对象顺序。
         }
         state.graph = dependencyGraph_;
@@ -652,9 +764,15 @@ namespace forge::application {
 
         for (const auto& saved : state.features) {
             // 基础体由 Registry 恢复；布尔特征的输入关系存放在 graph 中。
-            if (saved.type == "Imported") {
+            if (domain::AdvancedFeature::isType(saved.type)) {
+                restored.push_back(std::make_unique<domain::AdvancedFeature>(saved.id,saved.type,saved.parameters,saved.definition));
+            } else if (saved.type == "Imported") {
                 restored.push_back(std::make_unique<domain::ImportedFeature>(saved.id, saved.importedGeometry,
                     saved.sourceName, saved.parameters.at("x"), saved.parameters.at("y"), saved.parameters.at("z")));
+            } else if (saved.type=="Revolve") {
+                restored.push_back(std::make_unique<domain::RevolveFeature>(saved.id,saved.parameters.at("angle"),
+                    static_cast<domain::RevolveAxis>(static_cast<int>(saved.parameters.at("axis"))),
+                    saved.parameters.at("x"),saved.parameters.at("y"),saved.parameters.at("z")));
             } else if (saved.type == "ExtrudeCut") {
                 const double direction=saved.parameters.contains("direction") ? saved.parameters.at("direction") : 0.0;
                 restored.push_back(std::make_unique<domain::ExtrudeCutFeature>(saved.id,saved.parameters.at("height"),

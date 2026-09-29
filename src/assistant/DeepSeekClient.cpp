@@ -24,7 +24,7 @@ bool DeepSeekClient::hasApiKey() const
 }
 
 // 将一轮完整对话和工具说明序列化为请求，并异步等待模型响应。
-void DeepSeekClient::send(const QJsonArray& messages, const QJsonArray& tools)
+void DeepSeekClient::send(const QJsonArray& messages, const QJsonArray& tools, bool allowTools)
 {
     // 每次请求时读取环境变量，便于从 IDE Run Configuration 注入密钥。
     // 不能把 API Key 缓存在配置文件，更不能在错误信息里输出 Authorization。
@@ -59,7 +59,8 @@ void DeepSeekClient::send(const QJsonArray& messages, const QJsonArray& tools)
         {"model", model},
         {"messages", messages},
         {"tools", tools},
-        {"tool_choice", "auto"},
+        // 收尾轮禁止继续调用工具，避免达到预算后再次修改模型。
+        {"tool_choice", allowTools ? "auto" : "none"},
         {"stream", false},
         {"thinking", QJsonObject{{"type", "disabled"}}},
     };

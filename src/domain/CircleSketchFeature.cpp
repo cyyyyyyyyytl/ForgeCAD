@@ -3,6 +3,7 @@
 #include "domain/PositionParameters.h"
 #include <stdexcept>
 #include "geometry/ShapeFactory.h"
+#include "geometry/AdvancedModeling.h"
 
 namespace forge::domain {
 
@@ -11,13 +12,13 @@ namespace forge::domain {
         double radius,
         double x,
         double y,
-        double z)
+        double z, int plane)
         : Feature(std::move(id), "CircleSketch")
         , parameters_{
         {"radius", radius},
         {"x", x},
         {"y", y},
-        {"z", z}}
+        {"z", z}, {"plane",static_cast<double>(plane)}}
     {
     }
 
@@ -52,7 +53,7 @@ namespace forge::domain {
             parameters_[0].asDouble()); // radius
 
         return geometry::ShapeFactory::translate(
-            wire,
+            geometry::AdvancedModeling::orientSketch(wire,static_cast<int>(parameters_[4].asDouble())),
             parameters_[1].asDouble(),  // x
             parameters_[2].asDouble(),  // y
             parameters_[3].asDouble()); // XY 平面的高度

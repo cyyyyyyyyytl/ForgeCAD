@@ -1,4 +1,5 @@
 #include "infrastructure/DocumentJson.h"
+#include "infrastructure/DefinitionJson.h"
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -32,6 +33,7 @@ QByteArray DocumentJson::encode(const application::DocumentData& data) {
             require(std::isfinite(value)); parameters[QString::fromStdString(name)] = value;
         }
         item["parameters"] = parameters;
+        if (!f.definition.empty()) item["definition"]=encodeDefinition(f.definition);
         QJsonArray dependencies;
         for (const auto& id : f.dependencies) dependencies.append(QString::fromStdString(id));
         item["dependencies"] = dependencies;
@@ -65,6 +67,9 @@ application::DocumentData DocumentJson::decode(const QByteArray& bytes) {
         require(value.isObject()); const auto item = value.toObject();
         application::FeatureData f;
         f.id = text(item,"id").toStdString(); f.type = text(item,"type").toStdString();
+        if (item.contains("definition")) {
+            require(item["definition"].isObject());f.definition=decodeDefinition(item["definition"].toObject());
+        }
         require(integer(item["version"]) == 1);
         require(item["parameters"].isObject() && item["dependencies"].isArray());
         const auto parameters = item["parameters"].toObject();

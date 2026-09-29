@@ -1,5 +1,6 @@
 #pragma once
 #include "domain/FeatureRegistry.h"
+#include "domain/FeatureDefinition.h"
 #include <map>
 #include <string>
 #include <vector>
@@ -12,6 +13,7 @@ namespace forge::application {
         int version = 1;                 // 该特征的数据版本。
 
         domain::NumericParameters parameters;
+        domain::FeatureDefinition definition;
         std::vector<std::string> dependencies; // 布尔顺序：主体、工具。
 
         std::string geometryAsset;        // 导入对象的几何资源名；基本体留空。

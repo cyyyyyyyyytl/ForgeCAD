@@ -15,6 +15,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow> // MainWindow 继承的 Qt 顶层窗口基类。
+#include <QJsonObject>
 #include <string>      // 保存当前选中和视口映射使用的稳定 Feature ID。
 #include <vector>      // 保存“视口显示下标 -> Feature ID”的顺序映射。
 
@@ -44,7 +45,16 @@ public:
     ~MainWindow();                                  // 释放手写 new 的 Ui 包装对象。
 
 private slots:
+    void on_actionNewCone_triggered();
+    void on_actionNewProfileSketch_triggered();
+    void on_actionNewPath3D_triggered();
+    void on_actionTransform_triggered();
+    void on_actionFillet_triggered();
+    void on_actionChamfer_triggered();
+    void on_actionSweep_triggered();
+    void on_actionLoft_triggered();
     void on_actionExtrude_triggered();
+    void on_actionRevolve_triggered();
     void on_actionExtrudeCut_triggered();
     void on_actionPlaceFeature_triggered();
     void on_actionNewRectangleSketch_triggered();
@@ -67,8 +77,10 @@ private slots:
     void on_actionDeleteFeature_triggered();// 编辑→删除选中特征（Del）
 
 private:
+    void advancedFeatureDialog(const std::string& type,const std::string& editId={});
     void closeEvent(QCloseEvent* event) override;
-    bool saveDocument(bool saveAs);
+    bool saveDocument(bool saveAs, const QString& requestedPath = {}, QJsonObject* outcome = nullptr);
+    QJsonObject executeAssistantUiTool(const QString& name, const QJsonObject& arguments);
     bool confirmDiscardChanges();
     bool documentModified() const;
     QString documentPath_;

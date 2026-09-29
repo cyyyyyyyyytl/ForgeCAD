@@ -18,6 +18,7 @@ namespace forge::domain {
         std::string validate() const override;
 
         TopoDS_Shape rebuild(const std::vector<TopoDS_Shape>& inputs = {}) const override;
+        core::ShapeResult rebuildResult(const std::vector<TopoDS_Shape>& inputs = {}) const override;
 
     private:
         std::vector<Parameter> parameters_;

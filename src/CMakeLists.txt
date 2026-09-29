@@ -13,7 +13,10 @@ add_library(forgecore
     assistant/AgentController.cpp
     assistant/DeepSeekClient.cpp
     assistant/ToolRegistry.cpp
+    assistant/AdvancedTools.cpp
     # domain/geometry：参数化 Feature 及 OCCT 构造。
+    domain/AdvancedFeature.cpp
+    geometry/AdvancedModeling.cpp
     domain/ImportedFeature.cpp
     domain/Feature.cpp
     domain/BoxFeature.cpp
@@ -21,6 +24,7 @@ add_library(forgecore
     domain/FeatureRegistry.cpp
     domain/DependencyGraph.cpp
     geometry/ShapeFactory.cpp
+    geometry/ShapeAnalyzer.cpp
     geometry/PointPicker.cpp
     # Viewport3D 可被不同窗口复用，因此放进核心库；MainWindow 不放这里。
     ui/Viewport3D.cpp
@@ -28,11 +32,13 @@ add_library(forgecore
     domain/SphereFeature.cpp
     infrastructure/StepIO.cpp
     infrastructure/DocumentJson.cpp
+    infrastructure/DefinitionJson.cpp
     infrastructure/NativeDocumentIO.cpp
     infrastructure/ZipArchive.cpp
     domain/RectangleSketchFeature.cpp
     domain/CircleSketchFeature.cpp
     domain/ExtrudeFeature.cpp
+    domain/RevolveFeature.cpp
     domain/ExtrudeCutFeature.cpp
 )
 

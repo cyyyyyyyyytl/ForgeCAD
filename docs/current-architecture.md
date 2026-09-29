@@ -55,7 +55,17 @@ UI 和 AI 不直接增删 `features_`，也不各自实现参数校验。这样�
 `BooleanFeature` 保存运算种类；上游 ID 按主体、工具顺序保存在依赖图中。
 `rebuildShapes()` 按拓扑顺序计算并传入上游 Shape，`visibleFeatureIds()` 隐藏被布尔
 特征使用的输入和中间结果。模型树仍保留全部特征；删除结果或撤销会恢复输入的可见性。
-AI 工具目前仍只提供基础体创建，尚未提供布尔运算入口。
+AI已提供37个工具，见 [AI工具说明](ai-tools.md)。扩展造型定义和Designer接线见 [扩展建模](advanced-modeling.md)。
+geometry/ShapeAnalyzer 对精确B-Rep做只读分析，返回世界包围盒、体积/面积、体积质心与唯一拓扑数量。
+ToolRegistry 的 analyze_geometry 支持单特征和排除已消费上游的最终文档分析；失败文档不使用显示回退结果。
+Agent 在发生修改后的下一次请求前自动提供本机几何反馈，并在结束/中断汇报中附实体数量与尺寸。
+空间规则与 supports_position 让模型在创建关键结构前判断定位与旋转约束；Revolve现支持生成后的世界XYZ平移，保留输入依赖，历史/原生文件均保存这份平移。
+旧文件angle/axis读取补XYZ=0，草图缺plane补XY。Transform提供实体／线框旋转和平移；旋转结果仍无点击定位或视觉反馈。
+
+AdvancedFeature负责Cone、ProfileSketch、Path3D、Transform、Fillet、Chamfer、Sweep、Loft的参数和重建，AdvancedModeling封装OCCT。FeatureDefinition保存顶点／圆弧、路径／经过点和边ID，与数值参数一起进入历史快照和原生JSON。领域层不依赖Qt，DefinitionJson严格编解码，AdvancedTools提供工具入口，AdvancedDialogs提供表格、选边和截面排序界面。创建和定义编辑先验证几何，再提交一次历史；规则选边随上游重选，指定边签名失效时明确报错。
+`ToolRegistry` 与 `ModelDocument` 共享参数规则，返回稳定 ID、输入依赖和重建诊断。
+`AgentController::executeTool` 是网络调用与离线测试共用的确认/刷新入口。
+`UiToolHandler` 把文件、选择、点击定位和相机工具交给 MainWindow，保持窗口与文档层分工。
 
 菜单及对话框自动化测试放在 `forgecad_ui_tests`，通过
 `FORGECAD_BUILD_UI_TESTS=ON` 启用，核心测试与之分开。菜单、对话框和撤销重做测试已通过。
@@ -99,7 +109,7 @@ Command 或增量历史；它的公开接口不需要改变：
 
 ## 增加一种新特征
 
-以未来的 Cone 为例：
+以新增独立数值基础体为例（Cone现已由AdvancedFeature实现）：
 
 1. 新建 `ConeFeature.h/.cpp`，实现参数、校验和 `rebuild()`。
 2. 在 `FeatureRegistry.cpp` 登记参数范围和创建代码。
@@ -107,7 +117,7 @@ Command 或增量历史；它的公开接口不需要改变：
 4. 添加 Feature 与 Registry 测试。
 5. 在 UI 中增加入口和中文显示名。
 
-不需要修改 ModelDocument、Undo/Redo 或 AI 的通用参数处理流程。
+独立数值基础体可复用ModelDocument、历史和AI通用参数处理。带结构化轮廓、选边或有序输入的新操作还需接入定义编解码、文档创建／恢复、专用AI工具与UI，见AdvancedFeature实现。
 
 ## 推荐阅读顺序
 
@@ -125,7 +135,7 @@ Command 或增量历史；它的公开接口不需要改变：
 基本体的尺寸参数后保存 x/y/z 三个位置参数，单位毫米，默认零。
 Box 使用基准角点，Cylinder 使用底面圆心并沿 +Z 构造，Sphere 使用球心。
 位置定义在世界坐标系中；ShapeFactory::translate 用 OCCT Location 应用纯平移，
-不改变尺寸和拓扑，布尔输入使用定位后的形状。当前不支持旋转和局部坐标系。
+不改变尺寸和拓扑，布尔输入使用定位后的形状。Transform现支持绕指定世界pivot依次XYZ旋转并平移；没有通用局部坐标系对象。
 
 Registry 将位置登记为可选参数，省略任一分量时取零，尺寸仍必填，未知参数被拒绝。
 位置范围 ±1,000,000 mm；尺寸和位置都拒绝 NaN/Infinity。快照保存全部参数，

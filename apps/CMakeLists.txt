@@ -8,6 +8,8 @@ set(CMAKE_AUTOUIC ON)
 add_executable(forgecad WIN32
     forgecad/main.cpp
     ../src/ui/mainwindow.cpp
+    ../src/ui/AssistantTools.cpp
+    ../src/ui/AdvancedDialogs.cpp
     ../src/ui/mainwindow.ui
     ../src/ui/assistantdialog.cpp
     ../src/ui/assistantdialog.h

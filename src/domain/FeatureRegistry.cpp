@@ -5,6 +5,7 @@
 #include "domain/SphereFeature.h"   // Sphere 分支需要完整类型。
 
 #include "domain/PositionParameters.h"
+#include "domain/AdvancedFeature.h"
 
 #include <algorithm> // std::find_if 负责按名称查找类型和参数。
 #include <stdexcept> // 区分用户输入错误 invalid_argument 和开发遗漏 logic_error。
@@ -38,18 +39,22 @@ const std::vector<FeatureDescriptor>& FeatureRegistry::all()
             {"y", 0.0, -positionLimit, positionLimit, true},
             {"z", 0.0, -positionLimit, positionLimit, true},
         }},
+        {"Cone", {{"radius_bottom",20,0,10000},{"radius_top",40,0,10000},{"height",60,.001,10000},
+            {"x",0,-positionLimit,positionLimit,true},{"y",0,-positionLimit,positionLimit,true},{"z",0,-positionLimit,positionLimit,true}}},
         {"RectangleSketch", {
                 {"length", 100.0, 1.0, 10000.0},
                 {"width",   50.0, 1.0, 10000.0},
                 {"x", 0.0, -positionLimit, positionLimit, true},
                 {"y", 0.0, -positionLimit, positionLimit, true},
                 {"z", 0.0, -positionLimit, positionLimit, true},
+                {"plane",0,0,2,true},
         }},
         {"CircleSketch",{
                 {"radius", 20.0, 1.0, 10000.0},
                 {"x", 0.0, -positionLimit, positionLimit, true},
                 {"y", 0.0, -positionLimit, positionLimit, true},
                 {"z", 0.0, -positionLimit, positionLimit, true},
+                {"plane",0,0,2,true},
         }},
     };
     return descriptors; // 返回同一份静态登记表的只读引用，不发生容器复制。
@@ -57,6 +62,18 @@ const std::vector<FeatureDescriptor>& FeatureRegistry::all()
 
 const FeatureDescriptor* FeatureRegistry::find(std::string_view type)
 {
+    static const std::vector<FeatureDescriptor> advanced={
+        {"ProfileSketch",{{"plane",0,0,2,true},{"closed",1,0,1,true},{"x",0,-positionLimit,positionLimit,true},{"y",0,-positionLimit,positionLimit,true},{"z",0,-positionLimit,positionLimit,true}}},
+        {"Path3D",{{"closed",0,0,1,true},{"x",0,-positionLimit,positionLimit,true},{"y",0,-positionLimit,positionLimit,true},{"z",0,-positionLimit,positionLimit,true}}},
+        {"Transform",{{"rx",0,-3600,3600,true},{"ry",0,-3600,3600,true},{"rz",0,-3600,3600,true},
+            {"pivot_x",0,-positionLimit,positionLimit,true},{"pivot_y",0,-positionLimit,positionLimit,true},{"pivot_z",0,-positionLimit,positionLimit,true},
+            {"x",0,-positionLimit,positionLimit,true},{"y",0,-positionLimit,positionLimit,true},{"z",0,-positionLimit,positionLimit,true}}},
+        {"Fillet",{{"radius",2,.001,10000},{"selection",1,0,4,true}}},
+        {"Chamfer",{{"distance",2,.001,10000},{"selection",1,0,4,true}}},
+        {"Sweep",{{"align_profile",1,0,1,true}}},
+        {"Loft",{{"ruled",0,0,1,true}}}
+    };
+    for (const auto& descriptor:advanced) if (descriptor.type==type) return &descriptor;
     // 导入类型只能由实际几何创建，不加入基本体创建列表或 AI 的 create_feature 枚举。
     static const FeatureDescriptor imported{"Imported", {
         {"x", 0.0, -positionLimit, positionLimit, true},
@@ -69,6 +86,12 @@ const FeatureDescriptor* FeatureRegistry::find(std::string_view type)
     if (type == "Extrude") return &extrude;
     static const FeatureDescriptor extrudeCut{"ExtrudeCut",extrude.parameters};
     if (type == "ExtrudeCut") return &extrudeCut;
+    static const FeatureDescriptor revolve{"Revolve", {
+        {"angle",360.0,0.001,360.0}, {"axis",1.0,0.0,2.0,true},
+        {"x",0.0,-positionLimit,positionLimit,true},
+        {"y",0.0,-positionLimit,positionLimit,true},
+        {"z",0.0,-positionLimit,positionLimit,true}}};
+    if (type == "Revolve") return &revolve;
     // 当前只有三类特征，线性查找比额外索引更直接。
     const auto& descriptors = all(); // 借用全局唯一登记表，避免复制全部描述。
     const auto it = std::find_if(
@@ -104,9 +127,14 @@ std::unique_ptr<Feature> FeatureRegistry::create(
     const std::string& id,
     const NumericParameters& parameters)
 {
+    if (AdvancedFeature::isType(type)) {
+        if (type!="Cone") throw std::invalid_argument("此特征需要结构化定义或输入");
+        return std::make_unique<AdvancedFeature>(id,type,parameters);
+    }
     if (type == "Imported") throw std::invalid_argument("导入特征必须提供原始几何");
     if (type == "Extrude") throw std::invalid_argument("拉伸必须通过草图创建");
     if (type == "ExtrudeCut") throw std::invalid_argument("拉伸切除必须指定主体和草图");
+    if (type == "Revolve") throw std::invalid_argument("旋转必须指定草图输入");
     // 第一层校验：特征类型必须已登记。
     const FeatureDescriptor* descriptor = find(type);
     if (!descriptor) {
@@ -131,6 +159,7 @@ std::unique_ptr<Feature> FeatureRegistry::create(
             value->second > parameter.maximum) {
             throw std::invalid_argument(type + " 参数超出范围: " + parameter.name);
         }
+        if (parameter.name=="plane" && std::floor(value->second)!=value->second) throw std::invalid_argument("草图平面必须是整数");
         // 按 Descriptor 的稳定顺序放入数组，供具体特征构造函数安全使用。
         values.push_back(value->second);
     }
@@ -147,11 +176,11 @@ std::unique_ptr<Feature> FeatureRegistry::create(
     }
     if (type == "RectangleSketch") {
         return std::make_unique<RectangleSketchFeature>(
-            id, values[0], values[1], values[2], values[3], values[4]);
+            id, values[0], values[1], values[2], values[3], values[4], static_cast<int>(values[5]));
     }
     if (type == "CircleSketch") {
         return std::make_unique<CircleSketchFeature>(
-            id, values[0], values[1], values[2], values[3]);
+            id, values[0], values[1], values[2], values[3], static_cast<int>(values[4]));
     }
 
     // 说明已登记但创建分支遗漏，这是开发错误而不是用户输入错误。

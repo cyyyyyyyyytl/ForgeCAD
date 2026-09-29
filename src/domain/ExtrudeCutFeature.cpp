@@ -24,8 +24,9 @@ core::ShapeResult ExtrudeCutFeature::rebuildResult(const std::vector<TopoDS_Shap
     if (!error.empty()) return {{},core::RebuildStatus::Failed,error};
     if (inputs.size()!=2 || !geometry::ShapeFactory::isSolidBody(inputs[0]))
         return {{},core::RebuildStatus::Failed,"拉伸切除需要实体主体和一个草图输入"};
-    const auto tool=extrusion_.rebuild({inputs[1]});
-    if (tool.IsNull()) return {{},core::RebuildStatus::Failed,"切除轮廓无法生成拉伸实体"};
+    const auto extrusion=extrusion_.rebuildResult({inputs[1]});
+    if (!extrusion.usable()) return extrusion;
+    const auto tool=extrusion.shape;
     const auto common=geometry::ShapeFactory::intersectionResult(inputs[0],tool);
     if (!common.usable()) return common;
     try {

@@ -4,6 +4,8 @@
 #include <QJsonArray>  // schemas() 返回一组可提供给模型的工具描述。
 #include <QJsonObject> // 工具参数和执行结果都使用 JSON 对象承载。
 #include <QString>     // 工具名和 JSON 字符串使用 Qt Unicode 字符串。
+#include <functional>
+#include <utility>
 
 namespace forge::application {
 // 只保存引用，因此头文件知道类名即可；完整定义放在 .cpp 中包含。
@@ -31,6 +33,10 @@ public:
     QJsonArray schemas() const; // 返回发给模型的全部 function tool JSON Schema。
     QJsonObject execute(const QString& toolName,
                         const QJsonObject& arguments); // 统一白名单分发并封装错误。
+    // 文件、选择和视图需要窗口上下文；无窗口时明确返回不可用，不假装执行成功。
+    using UiToolHandler = std::function<QJsonObject(const QString&, const QJsonObject&)>;
+    void setUiToolHandler(UiToolHandler handler) { uiToolHandler_ = std::move(handler); }
+    void validateArguments(const QString& toolName, const QJsonObject& arguments) const;
 
 private:
     // 领域对象序列化辅助函数：只暴露 ID、类型和参数，不暴露 OCCT 句柄。
@@ -40,6 +46,13 @@ private:
     QJsonObject createFeature(const QJsonObject& arguments);  // create_feature 实现。
     QJsonObject setParameter(const QJsonObject& arguments);   // set_parameter 实现。
     QJsonObject deleteFeature(const QJsonObject& arguments); // delete_feature 实现。
+    QJsonObject changedFeature(const domain::Feature& feature) const;
+    QJsonObject documentStatus() const;
+    QJsonObject featureTypes() const;
+    QJsonObject analyzeGeometry(const QJsonObject& arguments) const;
+    QJsonArray advancedSchemas() const;
+    QJsonObject executeAdvanced(const QString& name,const QJsonObject& arguments);
+    UiToolHandler uiToolHandler_;
     // 非拥有引用：实际文档由 MainWindow 持有，并且比 ToolRegistry 活得久。
     application::ModelDocument& document_;
 };

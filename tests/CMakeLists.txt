@@ -23,6 +23,8 @@ if(FORGECAD_BUILD_UI_TESTS)
     add_executable(forgecad_ui_tests
         test_boolean_ui.cpp
         ../src/ui/mainwindow.cpp
+        ../src/ui/AssistantTools.cpp
+    ../src/ui/AdvancedDialogs.cpp
         ../src/ui/mainwindow.ui
         ../src/ui/assistantdialog.cpp
         ../src/ui/assistantdialog.ui

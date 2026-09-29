@@ -50,9 +50,9 @@
      <property name="geometry">
       <rect>
        <x>0</x>
-       <y>0</y>
-       <width>191</width>
-       <height>201</height>
+       <y>-40</y>
+       <width>201</width>
+       <height>261</height>
       </rect>
      </property>
     </widget>
@@ -73,7 +73,7 @@
       <x>315</x>
       <y>106</y>
       <width>120</width>
-      <height>160</height>
+      <height>138</height>
      </rect>
     </property>
     <property name="title">
@@ -82,8 +82,7 @@
     <addaction name="actionNewBox"/>
     <addaction name="actionNewCylinder"/>
     <addaction name="actionNewSphere"/>
-    <addaction name="actionNewRectangleSketch"/>
-    <addaction name="actionNewCircleSketch"/>
+    <addaction name="actionNewCone"/>
    </widget>
    <widget class="QMenu" name="menuEdit">
     <property name="title">
@@ -118,9 +117,25 @@
     </property>
     <addaction name="actionExtrude"/>
     <addaction name="actionExtrudeCut"/>
+    <addaction name="actionRevolve"/>
+    <addaction name="actionSweep"/>
+    <addaction name="actionLoft"/>
+    <addaction name="actionFillet"/>
+    <addaction name="actionChamfer"/>
+    <addaction name="actionTransform"/>
+   </widget>
+   <widget class="QMenu" name="menu_4">
+    <property name="title">
+     <string>草图</string>
+    </property>
+    <addaction name="actionNewRectangleSketch"/>
+    <addaction name="actionNewCircleSketch"/>
+    <addaction name="actionNewProfileSketch"/>
+    <addaction name="actionNewPath3D"/>
    </widget>
    <addaction name="menuFile"/>
    <addaction name="menu"/>
+   <addaction name="menu_4"/>
    <addaction name="menuEdit"/>
    <addaction name="menu_2"/>
    <addaction name="menu_3"/>
@@ -290,6 +305,51 @@
   <action name="actionExtrudeCut">
    <property name="text">
     <string>拉伸切除</string>
+   </property>
+  </action>
+  <action name="actionRevolve">
+   <property name="text">
+    <string>旋转</string>
+   </property>
+  </action>
+  <action name="actionNewCone">
+   <property name="text">
+    <string>圆锥／圆台</string>
+   </property>
+  </action>
+  <action name="actionNewProfileSketch">
+   <property name="text">
+    <string>自定义轮廓</string>
+   </property>
+  </action>
+  <action name="actionNewPath3D">
+   <property name="text">
+    <string>空间路径</string>
+   </property>
+  </action>
+  <action name="actionSweep">
+   <property name="text">
+    <string>扫掠</string>
+   </property>
+  </action>
+  <action name="actionLoft">
+   <property name="text">
+    <string>放样</string>
+   </property>
+  </action>
+  <action name="actionFillet">
+   <property name="text">
+    <string>圆角</string>
+   </property>
+  </action>
+  <action name="actionChamfer">
+   <property name="text">
+    <string>倒角</string>
+   </property>
+  </action>
+  <action name="actionTransform">
+   <property name="text">
+    <string>变换</string>
    </property>
   </action>
  </widget>

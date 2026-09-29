@@ -2,7 +2,7 @@
 
 #include "core/ShapeResult.h"
 #include <TopoDS_Shape.hxx> // 三个工厂函数统一返回的 OCCT 拓扑形状类型。
-
+#include <gp_Ax1.hxx>
 namespace forge::geometry {
 
 // 通过 OCCT 创建基础几何体；上层不需要接触具体 BRepPrimAPI 构造器。
@@ -35,6 +35,8 @@ public:
     static TopoDS_Shape makeCircleWire(double radius);
     // 将平面闭合轮廓沿 Z 拉伸成实体；有符号高度决定正反方向。
     static TopoDS_Shape extrudeWire(const TopoDS_Shape& profile, double height);
+    // 将闭合平面轮廓绕指定轴旋转，角度单位为度。
+    static TopoDS_Shape revolveWire(const TopoDS_Shape& profile,const gp_Ax1& axis,double angleDegrees);
 };
 
 } // namespace forge::geometry

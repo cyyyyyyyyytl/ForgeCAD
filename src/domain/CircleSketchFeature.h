@@ -11,7 +11,7 @@ namespace forge::domain {
             double radius,
             double x = 0.0,
             double y = 0.0,
-            double z = 0.0);
+            double z = 0.0, int plane = 0);
 
         const std::vector<Parameter>& parameters() const override;
 

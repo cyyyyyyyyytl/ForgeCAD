@@ -9,6 +9,7 @@
 #include <cmath>
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
+#include "geometry/AdvancedModeling.h"
 #include <TopLoc_Location.hxx>
 
 #include <spdlog/spdlog.h>              // 记录非法参数、OCCT 异常和成功构造信息。
@@ -33,6 +34,8 @@
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Iterator.hxx>
+#include <BRepPrimAPI_MakeRevol.hxx>
+#include <numbers>
 namespace forge::geometry {
 
 // ------------------------------------------------------------
@@ -360,7 +363,7 @@ TopoDS_Shape ShapeFactory::extrudeWire(const TopoDS_Shape& profile, double heigh
 
         // 将面沿 Z 轴正方向移动 height，扫出实体。
         BRepPrimAPI_MakePrism prism(
-            face.Face(), gp_Vec(0, 0, height));
+            face.Face(), gp_Vec(AdvancedModeling::sketchNormal(profile)) * height);
 
         const auto solid = prism.Shape();
 
@@ -369,6 +372,35 @@ TopoDS_Shape ShapeFactory::extrudeWire(const TopoDS_Shape& profile, double heigh
             return {};
             }
 
+        return solid;
+    } catch (const Standard_Failure&) {
+        return {};
+    }
+}
+
+TopoDS_Shape ShapeFactory::revolveWire(const TopoDS_Shape& profile, const gp_Ax1& axis, double angleDegrees)
+{
+    if (profile.IsNull() || profile.ShapeType() != TopAbs_WIRE ||
+        !std::isfinite(angleDegrees) || angleDegrees < 0.001 || angleDegrees > 360.0) {
+        return {};
+    }
+    try {
+        const auto wire = TopoDS::Wire(profile);
+        if (!wire.Closed()) return {};
+
+        // 闭合轮廓先填成平面，面旋转后才能生成实体。
+        BRepBuilderAPI_MakeFace face(wire, true);
+        if (!face.IsDone()) return {};
+
+        // UI、原生文档和 AI 都使用度数，只在进入 OCCT 时转换弧度。
+        const double radians = angleDegrees * std::numbers::pi / 180.0;
+        BRepPrimAPI_MakeRevol revol(face.Face(), axis, radians);
+        if (!revol.IsDone()) return {};
+        const auto solid = revol.Shape();
+        if (solid.IsNull() || solid.ShapeType() != TopAbs_SOLID ||
+            !BRepCheck_Analyzer(solid).IsValid()) {
+            return {};
+        }
         return solid;
     } catch (const Standard_Failure&) {
         return {};

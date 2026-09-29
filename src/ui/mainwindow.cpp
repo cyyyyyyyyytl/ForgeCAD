@@ -44,6 +44,9 @@
 #include "domain/FeatureRegistry.h"       // 动态生成新建/属性输入框的参数规则。
 #include "geometry/ShapeFactory.h"
 #include <algorithm>
+#include "domain/AdvancedFeature.h"
+#include <QCheckBox>
+#include <QSignalBlocker>
 #include <utility>
 
 #include <vector>               // 保存控件、分类顺序和有效 Shape 列表。
@@ -65,6 +68,13 @@ QString paramLabel(const std::string& en)
     if (en == "width")  return QStringLiteral("宽度");
     if (en == "height") return QStringLiteral("高度");
     if (en == "radius") return QStringLiteral("半径");
+    if (en == "angle") return QStringLiteral("旋转角度");
+    if (en == "radius_bottom") return QStringLiteral("底面半径");
+    if (en == "radius_top") return QStringLiteral("顶面半径");
+    if (en == "distance") return QStringLiteral("倒角距离");
+    if (en == "plane") return QStringLiteral("草图平面");
+    if (en == "rx" || en == "ry" || en == "rz") return QStringLiteral("绕世界 ")+QString::fromStdString(en.substr(1)).toUpper();
+    if (en.starts_with("pivot_")) return QStringLiteral("旋转中心 ")+QString::fromStdString(en.substr(6)).toUpper();
     return QString::fromStdString(en);   // 还没翻译的新参数先显示原名
 }
 
@@ -73,7 +83,16 @@ QString paramLabel(const std::string& en)
 // ------------------------------------------------------------
 QString kindLabel(const QString& kind)
 {
+    if (kind == "Cone") return QStringLiteral("圆锥／圆台");
+    if (kind == "ProfileSketch") return QStringLiteral("自定义轮廓");
+    if (kind == "Path3D") return QStringLiteral("空间路径");
+    if (kind == "Transform") return QStringLiteral("变换");
+    if (kind == "Fillet") return QStringLiteral("圆角");
+    if (kind == "Chamfer") return QStringLiteral("倒角");
+    if (kind == "Sweep") return QStringLiteral("扫掠");
+    if (kind == "Loft") return QStringLiteral("放样");
     if (kind == QStringLiteral("Extrude")) return QStringLiteral("拉伸");
+    if (kind == QStringLiteral("Revolve")) return QStringLiteral("旋转");
     if (kind == QStringLiteral("ExtrudeCut")) return QStringLiteral("拉伸切除");
     if (kind == QStringLiteral("RectangleSketch")) return QStringLiteral("矩形草图");
     if (kind == QStringLiteral("CircleSketch")) return QStringLiteral("圆形草图");
@@ -89,8 +108,8 @@ QString kindLabel(const QString& kind)
 
 void populateExtrudeDirections(QComboBox* combo)
 {
-    combo->addItem(QStringLiteral("正向（+Z）"),0);
-    combo->addItem(QStringLiteral("反向（-Z）"),1);
+    combo->addItem(QStringLiteral("正向（草图法线）"),0);
+    combo->addItem(QStringLiteral("反向（负法线）"),1);
     combo->addItem(QStringLiteral("对称（两侧各一半）"),2);
 }
 
@@ -215,6 +234,9 @@ void MainWindow::on_actionPlaceFeature_triggered()
         statusBar()->showMessage(QStringLiteral("请先选中草图或基础体，再点击定位。"),4000);
         return;
     }
+    for (const auto& p:feature->parameters()) if (p.name()=="plane" && p.asDouble()!=0) {
+        statusBar()->showMessage(QStringLiteral("XZ／YZ 草图请使用 XYZ 参数定位。"));return;
+    }
     double planeZ=0;
     for (const auto& parameter : feature->parameters())
         if (parameter.name()=="z") planeZ=parameter.asDouble();
@@ -223,6 +245,46 @@ void MainWindow::on_actionPlaceFeature_triggered()
     viewport_->beginPointPick(planeZ,excluded);
     positioningFeatureId_=feature->id();
     statusBar()->showMessage(QStringLiteral("点击实体表面或当前 XY 工作平面定位 · Esc 取消 · 草图仍平行于 XY 平面"));
+}
+
+void MainWindow::on_actionRevolve_triggered()
+{
+    QDialog dialog(this); dialog.setObjectName(QStringLiteral("revolveDialog"));
+    dialog.setWindowTitle(QStringLiteral("旋转"));
+    auto* form=new QFormLayout(&dialog);
+    auto* sketch=new QComboBox(&dialog); sketch->setObjectName(QStringLiteral("revolveSketch"));
+    for (const auto& feature : document_.features())
+        if (feature->type()=="RectangleSketch" || feature->type()=="CircleSketch" || feature->type()=="ProfileSketch" || feature->type()=="Transform") {
+            const auto id=QString::fromStdString(feature->id()); sketch->addItem(id,id);
+        }
+    if (sketch->count()==0) {
+        QMessageBox::information(this,QStringLiteral("旋转"),QStringLiteral("请先创建一个矩形或圆形草图。")); return;
+    }
+    const auto selected=sketch->findData(QString::fromStdString(selectedFeatureId_));
+    if (selected>=0) sketch->setCurrentIndex(selected);
+    auto* angle=new QDoubleSpinBox(&dialog); angle->setObjectName(QStringLiteral("revolveAngle"));
+    const auto* rule=forge::domain::FeatureRegistry::findParameter("Revolve","angle");
+    angle->setRange(rule->minimum,rule->maximum); angle->setDecimals(3);
+    angle->setValue(rule->defaultValue); angle->setSuffix(QStringLiteral(" °"));
+    auto* axis=new QComboBox(&dialog); axis->setObjectName(QStringLiteral("revolveAxis"));
+    axis->addItem(QStringLiteral("世界 X 轴"),0); axis->addItem(QStringLiteral("世界 Y 轴"),1); axis->addItem(QStringLiteral("Z"),2); axis->setCurrentIndex(1);
+    form->addRow(QStringLiteral("草图"),sketch); form->addRow(QStringLiteral("角度"),angle);
+    form->addRow(QStringLiteral("旋转轴"),axis);
+    auto* hint=new QLabel(QStringLiteral("旋转轴经过世界原点。圆环示例：半径 2、圆心 X=10，绕 Y 轴旋转 360°。"),&dialog);
+    hint->setWordWrap(true); form->addRow(hint);
+    auto* buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);
+    connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject); form->addRow(buttons);
+    if (dialog.exec()!=QDialog::Accepted) return;
+    try {
+        auto& feature=document_.createRevolveFeature(sketch->currentData().toString().toStdString(),angle->value(),
+            static_cast<forge::domain::RevolveAxis>(axis->currentData().toInt()));
+        selectedFeatureId_=feature.id(); refreshAfterHistoryChange();
+    } catch (const std::exception& error) {
+        QMessageBox::warning(this,QStringLiteral("创建失败"),QString::fromUtf8(error.what()));
+    }
 }
 
 void MainWindow::on_actionExtrude_triggered()
@@ -234,7 +296,7 @@ void MainWindow::on_actionExtrude_triggered()
     auto* sketch = new QComboBox(&dialog);
     sketch->setObjectName(QStringLiteral("extrudeSketchCombo"));
     for (const auto& feature : document_.features())
-        if (feature->type() == "RectangleSketch" || feature->type() == "CircleSketch") {
+        if (feature->type() == "RectangleSketch" || feature->type() == "CircleSketch" || feature->type() == "ProfileSketch" || feature->type() == "Transform") {
             const auto id = QString::fromStdString(feature->id());
             sketch->addItem(id,id);
         }
@@ -291,7 +353,7 @@ void MainWindow::on_actionExtrudeCut_triggered()
     for (const auto& feature : document_.features()) {
         const auto id=QString::fromStdString(feature->id());
         const auto label=id+QStringLiteral(" · ")+kindLabel(QString::fromStdString(feature->type()));
-        if (feature->type()=="RectangleSketch" || feature->type()=="CircleSketch")
+        if (feature->type()=="RectangleSketch" || feature->type()=="CircleSketch" || feature->type()=="ProfileSketch" || feature->type()=="Transform")
             sketch->addItem(label,id);
         else if (std::find(visible.begin(),visible.end(),feature->id())!=visible.end() &&
             forge::geometry::ShapeFactory::isSolidBody(report.at(feature->id()).shape))
@@ -493,9 +555,13 @@ void MainWindow::createFeatureFromDialog(const QString& type)
     QDialog dlg(this); // 栈上模态对话框在函数结束时自动销毁。
     dlg.setWindowTitle(QStringLiteral("新建") + kindLabel(type));   // "新建球体"…
     auto* form = new QFormLayout(&dlg);       // 表单布局：一行 = 标签 + 输入框
+    QComboBox* plane=nullptr;
     std::vector<QDoubleSpinBox*> spins;       // 记下所有输入框，确定后好取值
 
     for (const auto& parameter : descriptor->parameters) {
+        if (parameter.name=="plane") {
+            plane=new QComboBox(&dlg);plane->setObjectName(QStringLiteral("plane"));plane->addItems({"XY","XZ","YZ"});form->addRow(QStringLiteral("草图平面"),plane);continue;
+        }
         auto* spin = new QDoubleSpinBox(&dlg); // dlg 作为父对象自动管理输入框。
         spin->setObjectName(QString::fromStdString(parameter.name));
         spin->setRange(parameter.minimum, parameter.maximum); // 套用 Registry 统一范围。
@@ -507,13 +573,13 @@ void MainWindow::createFeatureFromDialog(const QString& type)
     }
 
     const QString reference = type == "Box" ? QStringLiteral("基准角点")
-        : type == "Cylinder" ? QStringLiteral("底面圆心")
-        : type == "RectangleSketch" ? QStringLiteral("矩形左下角（平行于 XY 平面）")
-        : type == "CircleSketch" ? QStringLiteral("圆心（平行于 XY 平面）")
+        : type == "Cylinder" || type == "Cone" ? QStringLiteral("底面圆心（轴沿 +Z）")
+        : type == "RectangleSketch" ? QStringLiteral("矩形起点（所选平面的 UV 原点）")
+        : type == "CircleSketch" ? QStringLiteral("圆心（所选平面的 UV 原点）")
         : QStringLiteral("球心");
     form->addRow(new QLabel(QStringLiteral("位置为世界坐标系中的%1，单位毫米。坐标轴方向保持不变。")
                            .arg(reference), &dlg));
-    form->addRow(new QLabel(QStringLiteral("创建后可在属性面板使用“点击定位”，到视口选择位置。"),&dlg));
+    form->addRow(new QLabel(QStringLiteral("可在属性面板修改 XYZ；XY 草图和已有基础体支持点击定位。"),&dlg));
 
     // ③ 底部放 确定/取消 按钮组，并把按钮文字改成中文
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok
@@ -531,10 +597,8 @@ void MainWindow::createFeatureFromDialog(const QString& type)
 
     // ⑤ 收集数值 → 工厂造特征（个数不对/未知类型会抛，捕获并提示）
     forge::domain::NumericParameters parameters;
-    for (std::size_t i = 0; i < descriptor->parameters.size(); ++i) {
-        // 描述和输入框按同一顺序保存，因此可安全组合为“参数名 -> 用户值”。
-        parameters.emplace(descriptor->parameters[i].name, spins[i]->value());
-    }
+    for (const auto* spin:spins) parameters.emplace(spin->objectName().toStdString(),spin->value());
+    if (plane) parameters["plane"]=plane->currentIndex();
 
     try {
         auto& feature = document_.createFeature(type.toStdString(), parameters);
@@ -671,6 +735,27 @@ void MainWindow::rebuildParamPanel()
     const auto& params = feature->parameters();
 
     for (const auto& p : params) {
+        if (p.name()=="plane" || p.name()=="selection" || p.name()=="closed" || p.name()=="align_profile" || p.name()=="ruled") {
+            if (p.name()=="selection") continue; // 用完整选边对话框原子更新规则和ID。
+            auto* combo=new QComboBox(ui->paramPanelContainer);combo->setObjectName(QString::fromStdString(p.name()));
+            combo->addItems(p.name()=="plane"?QStringList{"XY","XZ","YZ"}:QStringList{QStringLiteral("否"),QStringLiteral("是")});combo->setCurrentIndex(static_cast<int>(p.asDouble()));
+            const auto label=p.name()=="plane"?QStringLiteral("草图平面"):p.name()=="closed"?QStringLiteral("闭合"):p.name()=="ruled"?QStringLiteral("直纹面"):QStringLiteral("自动对齐截面");form->addRow(label,combo);
+            connect(combo,&QComboBox::currentIndexChanged,this,[this,featureId,combo,name=p.name()](int value){
+                try {document_.setParameter(featureId,name,value);refreshViewport(false);}
+                catch(const std::exception& e){statusBar()->showMessage(QString::fromUtf8(e.what()));const auto* f=document_.findFeature(featureId);for(const auto& p:f->parameters())if(p.name()==name){QSignalBlocker block(combo);combo->setCurrentIndex(static_cast<int>(p.asDouble()));}}
+            });continue;
+        }
+        if (feature->type()=="Revolve" && p.name()=="axis") {
+            auto* combo=new QComboBox(ui->paramPanelContainer); combo->setObjectName(QStringLiteral("axis"));
+            combo->addItem(QStringLiteral("世界 X 轴"),0); combo->addItem(QStringLiteral("世界 Y 轴"),1);
+            combo->addItem(QStringLiteral("Z"),2);
+            combo->setCurrentIndex(static_cast<int>(p.asDouble())); form->addRow(QStringLiteral("旋转轴"),combo);
+            connect(combo,qOverload<int>(&QComboBox::currentIndexChanged),this,[this,featureId,combo](int) {
+                try { document_.setParameter(featureId,"axis",combo->currentData().toDouble()); refreshViewport(false); }
+                catch (const std::invalid_argument& e) { statusBar()->showMessage(QStringLiteral("修改失败: %1").arg(e.what())); }
+            });
+            continue;
+        }
         if ((feature->type() == "Extrude" || feature->type() == "ExtrudeCut") && p.name() == "direction") {
             auto* combo = new QComboBox(ui->paramPanelContainer);
             combo->setObjectName(QStringLiteral("direction"));
@@ -690,7 +775,7 @@ void MainWindow::rebuildParamPanel()
         }
         auto* spin = new QDoubleSpinBox(ui->paramPanelContainer); // 父容器管理生命周期。
         spin->setDecimals(3);
-        spin->setSuffix(QStringLiteral(" mm")); // 与新建对话框保持一致的尺寸精度。
+        spin->setSuffix(p.name()=="angle" || p.name()=="rx" || p.name()=="ry" || p.name()=="rz" ? QStringLiteral(" °") : QStringLiteral(" mm"));
         // 键盘输入“50”时，默认会先为字符“5”发出一次 valueChanged，
         // 再为最终值“50”发出第二次，导致 Undo 历史记录两个中间状态。
         // 关闭 keyboardTracking 后，键盘编辑只在回车或失去焦点时提交最终值；
@@ -703,7 +788,8 @@ void MainWindow::rebuildParamPanel()
         spin->setObjectName(QString::fromStdString(p.name()));
         spin->setValue(p.asDouble());         // 初值 = 模型当前值
         const bool imported = dynamic_cast<const forge::domain::ImportedFeature*>(feature) != nullptr;
-        const QString label = imported && forge::domain::isPositionParameter(p.name())
+        const bool resultTranslation=imported || feature->type()=="Revolve" || feature->type()=="Transform";
+        const QString label = resultTranslation && forge::domain::isPositionParameter(p.name())
             ? QStringLiteral("平移 %1").arg(QString::fromStdString(p.name()).toUpper()) : paramLabel(p.name());
         form->addRow(label, spin); // 导入位置是额外平移，避免被误认为原始几何基准点。
 
@@ -729,6 +815,11 @@ void MainWindow::rebuildParamPanel()
         form->addRow(place);
     }
     rebuildStatusLabel_ = new QLabel(ui->paramPanelContainer);
+    if (feature->type()=="ProfileSketch" || feature->type()=="Path3D" || feature->type()=="Fillet" || feature->type()=="Chamfer") {
+        auto* edit=new QPushButton(feature->type()=="ProfileSketch"?QStringLiteral("编辑轮廓…"):feature->type()=="Path3D"?QStringLiteral("编辑路径…"):QStringLiteral("编辑选边…"),ui->paramPanelContainer);
+        edit->setObjectName(QStringLiteral("editDefinitionButton"));const auto type=feature->type();
+        connect(edit,&QPushButton::clicked,this,[this,type,featureId]{advancedFeatureDialog(type,featureId);});form->addRow(edit);
+    }
     rebuildStatusLabel_->setObjectName(QStringLiteral("rebuildStatusLabel"));
     rebuildStatusLabel_->setWordWrap(true);
     rebuildStatusLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -738,6 +829,11 @@ void MainWindow::rebuildParamPanel()
         info->setTextFormat(Qt::PlainText);
         info->setWordWrap(true);
         form->addRow(info);
+    }
+    if (feature->type()=="Revolve") {
+        auto* info=new QLabel(QStringLiteral("平移 XYZ 是旋转完成后的世界位移量，不是草图坐标或环心坐标。修改角度、轴或草图后仍保留这份平移。"),ui->paramPanelContainer);
+        info->setObjectName(QStringLiteral("revolvePositionInfo"));
+        info->setWordWrap(true); form->addRow(info);
     }
     form->addRow(QStringLiteral("重建状态"), rebuildStatusLabel_);
     updateRebuildFeedback();
@@ -791,6 +887,8 @@ void MainWindow::refreshViewport(bool fitAll)
 // ============================================================
 void MainWindow::refreshAfterHistoryChange()
 {
+    viewport_->cancelPointPick();
+    positioningFeatureId_.clear();
     setWindowModified(document_.isModified());
     if (!document_.findFeature(selectedFeatureId_)) {
         const auto& features = document_.features();
@@ -866,6 +964,9 @@ void MainWindow::setupAssistantDialog()
     // 它引用的 document_ 是 MainWindow 成员，生命周期更长。
     agentController_ = new forge::assistant::AgentController(
         document_, this);
+    agentController_->setUiToolHandler([this](const QString& name,const QJsonObject& arguments) {
+        return executeAssistantUiTool(name,arguments);
+    });
 
     connect(assistantDialog_, &AssistantDialog::messageSubmitted,
             this, [this](const QString& message) {
@@ -889,8 +990,11 @@ void MainWindow::setupAssistantDialog()
     // 工具真正修改模型后才刷新 UI；普通问答和查询不会触发不必要的 OCCT 重建。
     connect(agentController_, &forge::assistant::AgentController::modelChanged,
             this, [this](const QString& featureId) {
+                viewport_->cancelPointPick();
+                positioningFeatureId_.clear();
                 // 创建/修改时选中新对象；删除时 ID 已不存在，需走空文档也能处理的刷新路径。
-                selectedFeatureId_ = featureId.toStdString();
+                // 历史工具没有指定新对象时，保留仍存在的当前选择，与菜单撤销一致。
+                if (!featureId.isEmpty()) selectedFeatureId_ = featureId.toStdString();
 
                 if (!document_.findFeature(selectedFeatureId_)) {
                     refreshAfterHistoryChange();
@@ -947,13 +1051,14 @@ bool MainWindow::documentModified() const
     return document_.isModified();
 }
 
-bool MainWindow::saveDocument(bool saveAs)
+bool MainWindow::saveDocument(bool saveAs, const QString& requestedPath, QJsonObject* outcome)
 {
+    if (outcome) *outcome={{"success",false},{"cancelled",true},{"error","用户取消保存"}};
     QString path = documentPath_;
     if (saveAs || path.isEmpty()) {
-        path = QFileDialog::getSaveFileName(this, QStringLiteral("保存 ForgeCAD 文档"),
+        path = requestedPath.isEmpty() ? QFileDialog::getSaveFileName(this, QStringLiteral("保存 ForgeCAD 文档"),
             path.isEmpty() ? QStringLiteral("未命名.forgecad") : path,
-            QStringLiteral("ForgeCAD 文档 (*.forgecad)"),nullptr,QFileDialog::DontConfirmOverwrite);
+            QStringLiteral("ForgeCAD 文档 (*.forgecad)"),nullptr,QFileDialog::DontConfirmOverwrite) : requestedPath;
         if (path.isEmpty()) return false;
         if (QFileInfo(path).suffix().isEmpty()) path += QStringLiteral(".forgecad");
         // 自动补后缀后的目标也必须确认覆盖。
@@ -969,11 +1074,15 @@ bool MainWindow::saveDocument(bool saveAs)
         setWindowTitle(QFileInfo(path).fileName() + QStringLiteral("[*] — ForgeCAD"));
         setWindowModified(false);
         statusBar()->showMessage(QStringLiteral("文档已保存：%1").arg(path));
+        if (outcome) *outcome={{"success",true},{"path",path},{"modified",false}};
         return true;
     } catch (const Standard_Failure& error) {
-        QMessageBox::warning(this,QStringLiteral("保存失败"),QString::fromUtf8(error.GetMessageString()));
+        const auto message=QString::fromUtf8(error.GetMessageString() ? error.GetMessageString() : "几何内核异常");
+        if (outcome) *outcome={{"success",false},{"error",message}};
+        else QMessageBox::warning(this,QStringLiteral("保存失败"),message);
     } catch (const std::exception& error) {
-        QMessageBox::warning(this,QStringLiteral("保存失败"),QString::fromUtf8(error.what()));
+        if (outcome) *outcome={{"success",false},{"error",QString::fromUtf8(error.what())}};
+        else QMessageBox::warning(this,QStringLiteral("保存失败"),QString::fromUtf8(error.what()));
     }
     return false;
 }

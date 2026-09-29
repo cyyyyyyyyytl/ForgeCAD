@@ -3,6 +3,12 @@
 #include "application/ModelDocument.h" // 工具最终读写的真实文档。
 #include "assistant/ToolRegistry.h"     // 被测的 JSON 安全边界。
 #include "domain/Feature.h"             // 读取工具修改后的领域参数。
+#include <BRepGProp.hxx>
+#include <BRepCheck_Analyzer.hxx>
+#include <GProp_GProps.hxx>
+#include <numbers>
+#include <set>
+#include <limits>
 
 using forge::application::ModelDocument;
 using forge::assistant::ToolRegistry;
@@ -14,19 +20,164 @@ using forge::assistant::ToolRegistry;
 // 因此结果稳定、无费用，也能精确定位是协议层还是网络层出错。
 // ============================================================
 
-// Registry 必须只暴露当前约定的五个白名单工具。
-TEST(ToolRegistryTest, ExposesFiveModelingTools)
+// 登记的名称必须唯一，且覆盖当前全部建模、文件和窗口能力。
+TEST(ToolRegistryTest, ExposesAllCurrentOperations)
 {
     ModelDocument document;         // 使用空文档隔离本测试。
     ToolRegistry registry(document); // Registry 保存对该文档的非拥有引用。
 
     // 同时抽查首尾工具名，避免数量正确但删除工具未正确登记。
     const QJsonArray schemas = registry.schemas();
-    ASSERT_EQ(schemas.size(), 5); // 工具数量不符时停止，避免下面访问数组越界。
+    ASSERT_EQ(schemas.size(), 37);
+    std::set<std::string> names;
+    for (const auto& entry : schemas) {
+        const auto function=entry.toObject().value("function").toObject();
+        EXPECT_TRUE(names.insert(function.value("name").toString().toStdString()).second);
+        EXPECT_FALSE(function.value("description").toString().isEmpty());
+        EXPECT_FALSE(function.value("parameters").toObject().value("additionalProperties").toBool());
+    }
+    EXPECT_EQ(names,(std::set<std::string>{"list_features","get_feature","create_feature","set_parameter","delete_feature",
+        "get_feature_types","get_document_status","set_position","create_extrude","create_extrude_cut","create_revolve","create_boolean",
+        "undo","redo","new_document","open_document","save_document","save_document_as","import_step","export_step",
+        "select_feature","begin_point_placement","cancel_point_placement","control_view","get_spatial_rules","analyze_geometry","create_profile","set_profile","create_path","set_path","create_transform","list_edges","set_edge_selection","create_fillet","create_chamfer","create_sweep","create_loft"}));
     EXPECT_EQ(schemas[0].toObject()["function"].toObject()["name"].toString(),
               "list_features");
     EXPECT_EQ(schemas[4].toObject()["function"].toObject()["name"].toString(),
               "delete_feature");
+}
+
+namespace {
+double toolVolume(ModelDocument& document,const std::string& id)
+{
+    const auto result=document.rebuildReport().at(id);
+    EXPECT_EQ(result.status,forge::core::RebuildStatus::Ready);
+    if (result.shape.IsNull()) return 0;
+    EXPECT_TRUE(BRepCheck_Analyzer(result.shape).IsValid());
+    GProp_GProps properties; BRepGProp::VolumeProperties(result.shape,properties); return properties.Mass();
+}
+}
+
+TEST(ToolRegistryTest, CreatesRingEditsHalfRingAndReportsUpstreamFailureWithHistory)
+{
+    ModelDocument document; ToolRegistry registry(document);
+    ASSERT_TRUE(registry.execute("create_feature",{{"type","CircleSketch"},{"parameters",QJsonObject{{"radius",2},{"x",10}}}}).value("success").toBool());
+    auto result=registry.execute("create_revolve",{{"sketch_id","CircleSketch001"},{"angle",360},{"axis","Y"}});
+    ASSERT_TRUE(result.value("success").toBool());
+    EXPECT_EQ(result.value("dependencies").toArray(),(QJsonArray{"CircleSketch001"}));
+    EXPECT_NEAR(toolVolume(document,"Revolve001"),80*std::numbers::pi*std::numbers::pi,1e-6);
+    ASSERT_TRUE(registry.execute("set_parameter",{{"feature_id","Revolve001"},{"parameter_name","angle"},{"value",180}}).value("success").toBool());
+    EXPECT_NEAR(toolVolume(document,"Revolve001"),40*std::numbers::pi*std::numbers::pi,1e-6);
+    ASSERT_TRUE(registry.execute("undo",{}).value("success").toBool());
+    EXPECT_NEAR(toolVolume(document,"Revolve001"),80*std::numbers::pi*std::numbers::pi,1e-6);
+    ASSERT_TRUE(registry.execute("redo",{}).value("success").toBool());
+    EXPECT_NEAR(toolVolume(document,"Revolve001"),40*std::numbers::pi*std::numbers::pi,1e-6);
+    result=registry.execute("set_position",{{"feature_id","CircleSketch001"},{"x",0},{"y",0},{"z",0}});
+    EXPECT_TRUE(result.value("success").toBool());
+    const auto failures=result.value("document_status").toObject().value("failed_features").toArray();
+    ASSERT_EQ(failures.size(),1);
+    EXPECT_TRUE(failures[0].toObject().value("rebuild_message").toString().contains(QStringLiteral("跨越")));
+    EXPECT_EQ(document.visibleFeatureIds(),(std::vector<std::string>{"CircleSketch001"}));
+    ASSERT_TRUE(registry.execute("undo",{}).value("success").toBool());
+    EXPECT_NEAR(toolVolume(document,"Revolve001"),40*std::numbers::pi*std::numbers::pi,1e-6);
+}
+
+TEST(ToolRegistryTest, RejectsMalformedRevolveAndPreservesRedoAndNumbering)
+{
+    ModelDocument document; ToolRegistry registry(document);
+    document.createFeature("CircleSketch",{{"radius",2},{"x",10}});
+    document.createRevolveFeature("CircleSketch001",360); document.undo();
+    for (const auto& arguments : {
+        QJsonObject{{"sketch_id","CircleSketch001"},{"angle",0}},
+        QJsonObject{{"sketch_id","CircleSketch001"},{"angle",360},{"axis","Z"}},
+        QJsonObject{{"sketch_id","CircleSketch001"},{"angle","180"}},
+        QJsonObject{{"sketch_id","CircleSketch001"},{"angle",180},{"extra",1}},
+        QJsonObject{{"sketch_id","CircleSketch001"},{"angle",360},{"axis","X"}},
+        QJsonObject{{"sketch_id","missing"},{"angle",360}}}) {
+        EXPECT_FALSE(registry.execute("create_revolve",arguments).value("success").toBool());
+        EXPECT_TRUE(document.canRedo()); EXPECT_EQ(document.features().size(),1);
+    }
+    ASSERT_TRUE(registry.execute("redo",{}).value("success").toBool());
+    EXPECT_NEAR(toolVolume(document,"Revolve001"),80*std::numbers::pi*std::numbers::pi,1e-6);
+    const auto created=registry.execute("create_revolve",{{"sketch_id","CircleSketch001"},{"angle",180}});
+    EXPECT_EQ(created.value("feature_id").toString(),"Revolve002");
+    ModelDocument xDocument; ToolRegistry xRegistry(xDocument);
+    xDocument.createFeature("CircleSketch",{{"radius",2},{"y",10}});
+    ASSERT_TRUE(xRegistry.execute("create_revolve",{{"sketch_id","CircleSketch001"},{"angle",180},{"axis","X"}}).value("success").toBool());
+    EXPECT_NEAR(toolVolume(xDocument,"Revolve001"),40*std::numbers::pi*std::numbers::pi,1e-6);
+}
+
+TEST(ToolRegistryTest, CreatesBothSketchesAndAllExtrudeDirections)
+{
+    for (const char* direction : {"forward","reverse","symmetric"}) {
+        ModelDocument document; ToolRegistry registry(document);
+        ASSERT_TRUE(registry.execute("create_feature",{{"type","RectangleSketch"},{"parameters",QJsonObject{{"length",10},{"width",20}}}}).value("success").toBool());
+        auto result=registry.execute("create_extrude",{{"sketch_id","RectangleSketch001"},{"height",5},{"direction",direction}});
+        ASSERT_TRUE(result.value("success").toBool());
+        EXPECT_NEAR(toolVolume(document,"Extrude001"),1000,1e-6);
+        EXPECT_EQ(result.value("dependencies").toArray(),(QJsonArray{"RectangleSketch001"}));
+    }
+    ModelDocument document; ToolRegistry registry(document);
+    document.createFeature("CircleSketch",{{"radius",2}});
+    EXPECT_TRUE(registry.execute("create_extrude",{{"sketch_id","CircleSketch001"},{"height",5}}).value("success").toBool());
+    EXPECT_NEAR(toolVolume(document,"Extrude001"),20*std::numbers::pi,1e-6);
+}
+
+TEST(ToolRegistryTest, CreatesCutAndThreeBooleanOperationsWithOrderedInputs)
+{
+    for (const char* operation : {"difference","union","intersection"}) {
+        ModelDocument document; ToolRegistry registry(document);
+        document.createFeature("Box",{{"length",10},{"width",10},{"height",10}});
+        document.createFeature("Box",{{"length",5},{"width",5},{"height",5}});
+        const auto result=registry.execute("create_boolean",{{"operation",operation},{"base_id","Box001"},{"tool_id","Box002"}});
+        ASSERT_TRUE(result.value("success").toBool());
+        EXPECT_EQ(result.value("dependencies").toArray(),(QJsonArray{"Box001","Box002"}));
+        const double expected=std::string(operation)=="difference" ? 875 : std::string(operation)=="union" ? 1000 : 125;
+        EXPECT_NEAR(toolVolume(document,result.value("feature_id").toString().toStdString()),expected,1e-6);
+        EXPECT_FALSE(registry.execute("create_boolean",{{"operation",operation},{"base_id","Box001"},{"tool_id","Box001"}}).value("success").toBool());
+    }
+    ModelDocument document; ToolRegistry registry(document);
+    document.createFeature("Box",{{"length",10},{"width",10},{"height",10}});
+    document.createFeature("CircleSketch",{{"radius",2},{"x",5},{"y",5}});
+    const auto cut=registry.execute("create_extrude_cut",{{"base_id","Box001"},{"sketch_id","CircleSketch001"},{"height",10}});
+    ASSERT_TRUE(cut.value("success").toBool());
+    EXPECT_EQ(cut.value("dependencies").toArray(),(QJsonArray{"Box001","CircleSketch001"}));
+    EXPECT_NEAR(toolVolume(document,"ExtrudeCut001"),1000-40*std::numbers::pi,1e-6);
+}
+
+TEST(ToolRegistryTest, PositionIsAtomicAndInvalidArgumentsNeverMutate)
+{
+    ModelDocument document; ToolRegistry registry(document);
+    EXPECT_FALSE(registry.execute("undo",{}).value("success").toBool());
+    document.createFeature("Box",{{"length",10},{"width",10},{"height",10}});
+    ASSERT_TRUE(registry.execute("set_position",{{"feature_id","Box001"},{"x",10},{"y",20},{"z",30}}).value("success").toBool());
+    ASSERT_TRUE(registry.execute("undo",{}).value("success").toBool());
+    const auto parameters=registry.execute("get_feature",{{"feature_id","Box001"}}).value("parameters").toObject();
+    for (const char* axis : {"x","y","z"}) EXPECT_DOUBLE_EQ(parameters.value(axis).toDouble(),0);
+    EXPECT_FALSE(registry.execute("set_position",{{"feature_id","Box001"},{"x",1},{"y",2}}).value("success").toBool());
+    EXPECT_FALSE(registry.execute("set_parameter",{{"feature_id","Box001"},{"parameter_name","x"},{"value",std::numeric_limits<double>::infinity()}}).value("success").toBool());
+    EXPECT_FALSE(registry.execute("set_parameter",{{"feature_id","Box001"},{"parameter_name","x"},{"value",1},{"typo",2}}).value("success").toBool());
+    EXPECT_TRUE(document.canRedo());
+    EXPECT_TRUE(registry.execute("redo",{}).value("success").toBool());
+    EXPECT_FALSE(registry.execute("redo",{}).value("success").toBool());
+}
+
+TEST(ToolRegistryTest, DiscoversRulesAndRejectsUnavailableUiTools)
+{
+    ModelDocument document; ToolRegistry registry(document);
+    const auto types=registry.execute("get_feature_types",{}).value("types").toArray();
+    EXPECT_EQ(types.size(),20);
+    bool found=false;
+    for (const auto& value : types) if (value.toObject().value("type").toString()=="Revolve") {
+        const auto type=value.toObject(); found=true;
+        EXPECT_EQ(type.value("creation_tool").toString(),"create_revolve");
+        EXPECT_EQ(type.value("parameters").toArray()[0].toObject().value("unit").toString(),"degree");
+    }
+    EXPECT_TRUE(found);
+    EXPECT_FALSE(registry.execute("new_document",{}).value("success").toBool());
+    EXPECT_FALSE(registry.execute("control_view",{{"operation","zoom"}}).value("success").toBool());
+    EXPECT_FALSE(registry.execute("control_view",{{"operation","fit"},{"factor",2}}).value("success").toBool());
+    EXPECT_FALSE(registry.execute("save_document_as",{{"path",42}}).value("success").toBool());
+    EXPECT_EQ(registry.execute("get_document_status",{}).value("feature_count").toInt(),0);
 }
 
 // 模拟模型请求 create_feature，再用 list_features 查询刚创建的对象。

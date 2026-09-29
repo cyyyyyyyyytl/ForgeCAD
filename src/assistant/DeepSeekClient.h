@@ -25,7 +25,7 @@ public:
     explicit DeepSeekClient(QObject* parent = nullptr);
 
     // 发送一轮完整 Chat Completions 请求；结果通过下面两个信号异步返回。
-    void send(const QJsonArray& messages, const QJsonArray& tools);
+    void send(const QJsonArray& messages, const QJsonArray& tools, bool allowTools = true);
     bool hasApiKey() const; // 只检查环境变量是否存在，不读取到 UI 或日志。
 
 signals:
