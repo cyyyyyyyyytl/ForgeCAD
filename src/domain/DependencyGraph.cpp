@@ -56,26 +56,39 @@ bool DependencyGraph::addDependency(
 bool DependencyGraph::reachable(
     const std::string& start, const std::string& target) const
 {
-    // 递归的终点：当前走到的编号正好是要找的编号。
-    if (start == target) {
-        return true;
-    }
+    // 用显式栈代替递归：文档允许上万个特征，长依赖链的递归深度会耗尽
+    // 线程调用栈，导致加载模型时整个程序崩溃；迭代实现的内存占用由堆管理。
+    std::vector<std::string> pending{start};
+    // visited 记录已经展开过依赖名单的编号。菱形 DAG 中同一编号会被多条
+    // 路径遇到，不记录就会重复展开，最坏出现指数级重复遍历。
+    // 图本来由 addDependency 保证无环，visited 也让意外成环时循环能结束。
+    std::unordered_set<std::string> visited;
 
-    // find(start) 找表中的一行；找不到时返回 end()，不是新建一行。
-    const auto it = deps_.find(start);
-    if (it == deps_.end()) {
-        return false; // 没有这行，也就没有可继续走的依赖。
-    }
+    while (!pending.empty()) {
+        // back() 取下一张待检查的卡片；pop_back() 把它从栈里拿走。
+        const std::string current = pending.back();
+        pending.pop_back();
 
-    // it->second 是这一行右边的依赖名单。
-    // 例如 C -> [B]、B -> [A]，从 C 找 A：先问 B，再由 B 问 A。
-    // 函数在这里调用自己，这叫递归；图无环，最终会走到目标或空名单。
-    for (const std::string& next : it->second) {
-        if (reachable(next, target)) {
+        // 终点判断放在展开之前，start 本身等于 target 时第一轮就能返回。
+        if (current == target) {
             return true;
         }
+        // 同一编号可能被多个上游压栈；只有第一次展开才查它的依赖名单。
+        if (!visited.insert(current).second) {
+            continue;
+        }
+
+        // find 不会新建一行；未登记的编号没有可继续走的依赖。
+        const auto it = deps_.find(current);
+        if (it == deps_.end()) {
+            continue;
+        }
+        // 依赖顺序不影响可达性，逐个压栈，下一轮再展开。
+        for (const std::string& next : it->second) {
+            pending.push_back(next);
+        }
     }
-    return false; // 所有路线都走过了，仍没找到目标。
+    return false; // 所有可达路线都走过了，仍没找到目标。
 }
 
 std::vector<std::string> DependencyGraph::dependenciesOf(

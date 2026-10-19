@@ -92,7 +92,7 @@ public:
 
     // 查找返回非拥有指针：Document 仍拥有对象，调用方绝不能 delete。
     // Undo/Redo 会重建 Feature，因此不要长期保存返回指针，应长期保存 ID。
-    domain::Feature* findFeature(std::string_view id);
+    // 公开接口只暴露只读视图：任何参数修改都必须经过 Document 的范围校验和历史记录。
     const domain::Feature* findFeature(std::string_view id) const;
     // 返回只读容器视图：允许 UI 遍历，禁止 UI 绕过 Document 增删元素。
     const std::vector<std::unique_ptr<domain::Feature>>& features() const;
@@ -129,6 +129,8 @@ private:
     };
 
     // 以下方法只服务于 Document 内部，上层不需要理解即可使用建模 API。
+    // 内部写路径专用：返回可修改指针，避免为了一个 setParameter 把 mutable 重载暴露给 UI/AI。
+    domain::Feature* findFeatureForWrite(std::string_view id);
     std::string nextFeatureId(std::string_view type); // 生成 Box001 形式且不重复的 ID。
     DocumentState captureState() const;               // 深拷贝当前轻量模型数据。
     void restoreState(const DocumentState& state);    // 按快照重建 Feature 并恢复依赖图。

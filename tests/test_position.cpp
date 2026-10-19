@@ -119,3 +119,31 @@ TEST(PositionTest, AiToolsCreateQueryAndEditWorldPosition)
     ASSERT_TRUE(result["success"].toBool());
     expectSolid(document.rebuildShapes().at("Sphere001"), 36 * std::acos(-1.0), -2.125, 0, -4.5);
 }
+
+// 定位失败必须原地恢复三个坐标；旧实现用 restoreState 重建全部 Feature，
+// 调用方保存的 Feature* 会因此失效，失败路径也要 O(n) 重建。
+TEST(PositionTest, FailedSetPositionKeepsFeatureAddressAndCoordinates)
+{
+    ModelDocument document;
+    document.createFeature("Sphere", {{"radius", 3}, {"x", 2}});
+    const auto* sphere = document.findFeature("Sphere001");
+    ASSERT_NE(sphere, nullptr);
+    document.markSaved();
+    const auto coordinate = [sphere](const char* name) {
+        for (const auto& parameter : sphere->parameters())
+            if (parameter.name() == name) return parameter.asDouble();
+        return 0.0;
+    };
+
+    for (double value : {std::numeric_limits<double>::quiet_NaN(), 1000001.0}) {
+        EXPECT_THROW(document.setPosition("Sphere001", 5, value, 7), std::invalid_argument);
+        EXPECT_EQ(document.findFeature("Sphere001"), sphere); // 保持同一对象，没有重建 features_。
+        EXPECT_DOUBLE_EQ(coordinate("x"), 2.0);
+        EXPECT_DOUBLE_EQ(coordinate("y"), 0.0);
+        EXPECT_DOUBLE_EQ(coordinate("z"), 0.0);
+    }
+    EXPECT_FALSE(document.isModified()); // 失败没有推进 revision。
+
+    document.undo(); // 失败没有新增历史：这次撤销的是 Sphere 的创建。
+    EXPECT_TRUE(document.features().empty());
+}

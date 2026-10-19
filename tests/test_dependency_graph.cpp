@@ -105,3 +105,32 @@ TEST(DependencyGraphTest, DeletesDependentsBeforeTheirDependencies)
               (std::vector<std::string>{"X"}));
     EXPECT_TRUE(graph.removeNodeAndDependents("missing").empty());
 }
+
+TEST(DependencyGraphTest, WalksLongChainWithoutRecursionAndRejectsClosingEdge)
+{
+    forge::domain::DependencyGraph graph;
+
+    // 长链用于覆盖 reachable 的显式栈实现：旧的递归实现会沿依赖链逐层
+    // 调用自己，加载上万个特征时有栈溢出风险。addDependency 对每条新边
+    // 都要做一次可达性检查，总代价是 O(n²)；这里取任务允许区间
+    // 2000~5000 的下限 2000，使 Debug 构建下的测试耗时保持在秒级，
+    // 同时链深已远超日常模型，足以验证深链遍历与环拒绝的行为。
+    const int nodeCount = 2000;
+    std::vector<std::string> ids;
+    ids.reserve(static_cast<std::size_t>(nodeCount));
+    for (int i = 1; i <= nodeCount; ++i) {
+        ids.push_back("Box" + std::to_string(i)); // Box1、Box2、……、Box2000。
+        graph.addNode(ids.back());
+    }
+
+    // 依次登记 Box(i) 依赖 Box(i-1)，模拟加载一条很深的链式模型。
+    // 全程不应崩溃，也不应出现重复遍历导致的异常耗时。
+    for (int i = 1; i < nodeCount; ++i) {
+        ASSERT_TRUE(graph.addDependency(ids[i], ids[i - 1]));
+    }
+
+    // 末尾再让 Box1 依赖 Box2000：从 Box2000 沿链一定能走回 Box1，
+    // 这条边会闭合整条链，addDependency 必须拒绝且不改动原图。
+    EXPECT_FALSE(graph.addDependency(ids.front(), ids.back()));
+    EXPECT_TRUE(graph.dependenciesOf(ids.front()).empty());
+}

@@ -217,7 +217,7 @@ TEST(StepExportDocumentTest, EmptyResultsSkippedButFailedBranchesRejectExport)
     GProp_GProps properties;
     BRepGProp::VolumeProperties(mixed.shape, properties);
     EXPECT_NEAR(properties.Mass(), 36 * std::acos(-1.0), 1e-5);
-    document.findFeature("Box002")->setParameter("length", -1.0); // 注入上游故障。
+    const_cast<forge::domain::Feature*>(document.findFeature("Box002"))->setParameter("length", -1.0); // 测试故意注入上游故障，绕过 Document 校验。
     const auto failed = document.shapeForExport();
     EXPECT_EQ(failed.status, forge::core::RebuildStatus::Failed);
     EXPECT_TRUE(failed.shape.IsNull());

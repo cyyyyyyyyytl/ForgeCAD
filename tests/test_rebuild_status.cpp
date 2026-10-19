@@ -94,7 +94,8 @@ TEST(RebuildStatusTest, FailedInputBlocksDownstreamAndExposesHealthyInputs)
     d.createBooleanFeature(BooleanOperation::Difference, "Box001", "Box002");
     d.createBooleanFeature(BooleanOperation::Union, "Cut001", "Sphere001");
     // 故障注入模拟损坏的上游参数，不通过生产 UI 的参数校验。
-    d.findFeature("Box002")->setParameter("length", -1.0);
+    // Document 公开接口只给只读 Feature；测试故意 const_cast 绕过校验写入非法状态。
+    const_cast<forge::domain::Feature*>(d.findFeature("Box002"))->setParameter("length", -1.0);
     auto report = d.rebuildReport();
     EXPECT_EQ(report.at("Box002").status, RebuildStatus::Failed);
     EXPECT_EQ(report.at("Cut001").status, RebuildStatus::Blocked);
@@ -102,7 +103,7 @@ TEST(RebuildStatusTest, FailedInputBlocksDownstreamAndExposesHealthyInputs)
     EXPECT_NE(report.at("Cut001").message.find("Box002"), std::string::npos);
     EXPECT_EQ(report.at("Sphere001").status, RebuildStatus::Ready);
     EXPECT_EQ(d.visibleFeatureIds(report), (std::vector<std::string>{"Box001", "Sphere001"}));
-    d.findFeature("Box002")->setParameter("length", 5.0);
+    const_cast<forge::domain::Feature*>(d.findFeature("Box002"))->setParameter("length", 5.0); // 测试直接复位注入的损坏值。
     report = d.rebuildReport();
     EXPECT_EQ(report.at("Union001").status, RebuildStatus::Ready);
     EXPECT_EQ(d.visibleFeatureIds(report), (std::vector<std::string>{"Union001"}));
@@ -131,7 +132,7 @@ TEST(RebuildStatusTest, AiQueriesReportGeometryFailureSeparatelyFromDataSuccess)
     auto result = tools.execute("get_feature", {{"feature_id", "Intersection001"}});
     EXPECT_TRUE(result["success"].toBool());
     EXPECT_EQ(result["rebuild_status"].toString(), "empty");
-    d.findFeature("Box002")->setParameter("length", -1.0);
+    const_cast<forge::domain::Feature*>(d.findFeature("Box002"))->setParameter("length", -1.0); // 同样只用于注入故障。
     result = tools.execute("get_feature", {{"feature_id", "Intersection001"}});
     EXPECT_EQ(result["rebuild_status"].toString(), "blocked");
     EXPECT_TRUE(result["rebuild_message"].toString().contains("Box002"));

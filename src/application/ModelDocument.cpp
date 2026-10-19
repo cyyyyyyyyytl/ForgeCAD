@@ -16,6 +16,8 @@
 #include <Standard_Failure.hxx>
 #include <functional>
 #include <cmath>
+#include <charconv>  // from_chars 用于受控解析 ID 后缀，避免 stoll 抛出 out_of_range。
+#include <system_error> // std::errc 是 from_chars 的错误码类型。
 #include <algorithm> // std::find_if 按稳定 ID 在线性容器中查找对象。
 #include <iomanip>   // setw/setfill 把序号格式化成三位数。
 #include <sstream>  // ostringstream 拼接类型名和格式化后的序号。
@@ -36,6 +38,20 @@ namespace forge::application {
         case domain::BooleanOperation::Intersection: return "Intersection";
         }
         throw std::invalid_argument("未知布尔运算");
+    }
+
+    // 解析形如 Box001 的 ID 后缀。
+    // 用 from_chars 做 checked 解析：畸形文件里的超长数字应作为业务数据错误
+    // 统一抛 invalid_argument，而不是把 std::stoll 的 out_of_range 泄漏成实现细节。
+    int checkedIdSuffix(std::string_view suffix)
+    {
+        int number = 0;
+        const auto parsed = std::from_chars(
+            suffix.data(), suffix.data() + suffix.size(), number);
+        if (parsed.ec != std::errc{} || parsed.ptr != suffix.data() + suffix.size()) {
+            throw std::invalid_argument("特征 ID 编号无效");
+        }
+        return number;
     }
 
     } // namespace
@@ -74,7 +90,7 @@ namespace forge::application {
 
     void ModelDocument::setAdvancedDefinition(std::string_view id,const domain::NumericParameters& parameters,domain::FeatureDefinition definition)
     {
-        auto* feature=dynamic_cast<domain::AdvancedFeature*>(findFeature(id));
+        auto* feature=dynamic_cast<domain::AdvancedFeature*>(findFeatureForWrite(id));
         if (!feature) throw std::invalid_argument("此特征没有结构化定义");
         domain::AdvancedFeature candidate(feature->id(),feature->type(),parameters,definition);
         const auto report=rebuildReport();std::vector<TopoDS_Shape> shapes;
@@ -95,25 +111,35 @@ namespace forge::application {
         const domain::NumericParameters& parameters)
     {
         if (type=="Cone") return createAdvancedFeature(type,parameters);
-        // ID 由文档统一产生，避免 UI 与 AI 各自编号后发生冲突。
-        const std::string id = nextFeatureId(type);
-        // Registry 将字符串类型和具名参数转换成具体的 Box/Cylinder/Sphere 对象。
-        auto feature = domain::FeatureRegistry::create(type, id, parameters);
+        // nextFeatureId 会先写入序号计数，Registry 随后可能拒绝未知类型；
+        // 若不恢复，未登记类型（如 Torus）会留在 sequenceByType_ 里，
+        // 使 exportData() 生成 replaceData() 自己都会拒绝的序号表，导致文档无法保存。
+        auto sequencesBefore = sequenceByType_;
+        try {
+            // ID 由文档统一产生，避免 UI 与 AI 各自编号后发生冲突。
+            const std::string id = nextFeatureId(type);
+            // Registry 将字符串类型和具名参数转换成具体的 Box/Cylinder/Sphere 对象。
+            auto feature = domain::FeatureRegistry::create(type, id, parameters);
 
-        // Registry 检查外部参数格式；Feature::validate() 再保护对象自身不变量。
-        const std::string validationError = feature->validate();
-        if (!validationError.empty()) {
-            throw std::invalid_argument(validationError);
+            // Registry 检查外部参数格式；Feature::validate() 再保护对象自身不变量。
+            const std::string validationError = feature->validate();
+            if (!validationError.empty()) {
+                throw std::invalid_argument(validationError);
+            }
+
+            // 只有所有校验通过后才拍快照，失败的创建不会污染 Undo 历史。
+            DocumentState before = captureState();
+            // 所有权在这里从局部 unique_ptr 转移到 features_。
+            features_.push_back(std::move(feature));
+            dependencyGraph_.addNode(id);
+            rememberBeforeChange(std::move(before));
+            // vector 保存的是 unique_ptr；返回的是它所指向 Feature 的非拥有引用。
+            return *features_.back(); // 解引用最后一个 unique_ptr，只借出对象引用，不转移所有权。
+        } catch (...) {
+            // 失败创建必须像从未发生：恢复序号表，且 features_/依赖图/历史/revision 都没有改动。
+            sequenceByType_ = std::move(sequencesBefore);
+            throw;
         }
-
-        // 只有所有校验通过后才拍快照，失败的创建不会污染 Undo 历史。
-        DocumentState before = captureState();
-        // 所有权在这里从局部 unique_ptr 转移到 features_。
-        features_.push_back(std::move(feature));
-        dependencyGraph_.addNode(id);
-        rememberBeforeChange(std::move(before));
-        // vector 保存的是 unique_ptr；返回的是它所指向 Feature 的非拥有引用。
-        return *features_.back(); // 解引用最后一个 unique_ptr，只借出对象引用，不转移所有权。
     }
 
     domain::Feature& ModelDocument::createImportedFeature(const TopoDS_Shape& shape, const std::string& sourceName)
@@ -269,7 +295,7 @@ namespace forge::application {
     void ModelDocument::setParameter(std::string_view featureId,std::string_view parameterName,double value)
     {
         // 稳定 ID 是 UI、AI、历史恢复共同使用的对象身份。
-        domain::Feature* feature = findFeature(featureId);
+        domain::Feature* feature = findFeatureForWrite(featureId);
         if (!feature) {
             throw std::invalid_argument("找不到 Feature: " + std::string(featureId)); // 不产生历史。
         }
@@ -288,12 +314,17 @@ namespace forge::application {
 
         for (const auto& parameter : feature->parameters())
             if (parameter.name() == parameterName && parameter.asDouble() == value) return;
-        // 先保存旧状态，后续领域校验意外失败时可以完整回滚。
+        // 只需记录被修改参数的旧值：领域校验失败时原地写回这一项即可，
+        // 不能调用 restoreState 整体重建 features_，否则外部持有的 Feature* 全部失效且代价 O(n)。
+        double previousValue = value;
+        for (const auto& parameter : feature->parameters())
+            if (parameter.name() == parameterName) previousValue = parameter.asDouble();
+        // 成功路径仍然需要完整快照来支持 Undo；快照复制的是修改前的参数值。
         DocumentState before = captureState();
         feature->setParameter(std::string(parameterName), value);
         const std::string validationError = feature->validate();
         if (!validationError.empty()) {
-            restoreState(before); // 保证失败操作对用户来说“什么都没发生”。
+            feature->setParameter(std::string(parameterName), previousValue); // 只回滚这个参数。
             throw std::invalid_argument(validationError);
         }
 
@@ -303,7 +334,7 @@ namespace forge::application {
 
     void ModelDocument::setPosition(std::string_view featureId, double x, double y, double z)
     {
-        auto* feature=findFeature(featureId);
+        auto* feature=findFeatureForWrite(featureId);
         if (!feature) throw std::invalid_argument("找不到定位对象");
         const domain::NumericParameters values{{"x",x},{"y",y},{"z",z}};
         bool changed=false;
@@ -315,13 +346,24 @@ namespace forge::application {
                 if (parameter.name()==name && parameter.asDouble()!=value) changed=true;
         }
         if (!changed) return;
+        // 只记录三个坐标旧值：校验失败时原地写回，不能用 restoreState 重建整个文档，
+        // 否则调用方持有的 Feature* 会失效，失败路径也要付出 O(n) 的重建成本。
+        double oldX=0.0, oldY=0.0, oldZ=0.0;
+        for (const auto& parameter : feature->parameters()) {
+            if (parameter.name()=="x") oldX=parameter.asDouble();
+            else if (parameter.name()=="y") oldY=parameter.asDouble();
+            else if (parameter.name()=="z") oldZ=parameter.asDouble();
+        }
         auto before=captureState();
         try {
             for (const auto& [name,value] : values) feature->setParameter(name,value);
             const auto error=feature->validate();
             if (!error.empty()) throw std::invalid_argument(error);
         } catch (...) {
-            restoreState(before);
+            // 恢复三个旧值；对象地址和其余参数保持原样。
+            feature->setParameter("x",oldX);
+            feature->setParameter("y",oldY);
+            feature->setParameter("z",oldZ);
             throw;
         }
         rememberBeforeChange(std::move(before));
@@ -401,7 +443,7 @@ namespace forge::application {
         return !redoStack_.empty(); // true 表示当前时间线存在可重新应用的未来状态。
     }
 
-    domain::Feature* ModelDocument::findFeature(std::string_view id)
+    domain::Feature* ModelDocument::findFeatureForWrite(std::string_view id)
     {
         // 当前 MVP 特征数量少，线性查找最直观；性能需要时可加 ID 索引而不改 API。
         const auto it = std::find_if(
@@ -598,8 +640,9 @@ namespace forge::application {
             if (!types.contains(f.type) || f.version != 1 || !ids.insert(f.id).second ||
                 f.id.size() > 64 || !std::regex_match(f.id,std::regex(f.type + "[0-9]{3,}")))
                 throw std::invalid_argument("特征类型、版本或 ID 无效");
-            const auto suffix = f.id.substr(f.type.size());
-            const auto number = std::stoll(suffix);
+            // 用 checked 解析替代 std::stoll：畸形文件的超长数字会让 stoll 抛 out_of_range，
+            // 这里统一转成业务错误 invalid_argument；合法文件的解析结果保持不变。
+            const auto number = checkedIdSuffix(f.id.substr(f.type.size()));
             if (number < 1 || !data.sequences.contains(f.type) || number > data.sequences.at(f.type))
                 throw std::invalid_argument("特征编号计数落后于现有 ID");
             state.graph.addNode(f.id);
@@ -612,7 +655,12 @@ namespace forge::application {
                     throw std::invalid_argument("导入几何资源或位置参数无效");
                 for (const auto* name : {"x","y","z"}) {
                     const auto* descriptor = domain::FeatureRegistry::findParameter("Imported",name);
-                    const auto value = f.parameters.at(name);
+                    // 先用 find 检查参数名集合：缺字段的畸形文件必须统一报 invalid_argument，
+                    // 不能让 at() 的 out_of_range 泄漏给调用方；size==3 但名字不对也会被拦住。
+                    const auto position = f.parameters.find(name);
+                    if (position == f.parameters.end())
+                        throw std::invalid_argument("导入几何资源或位置参数无效");
+                    const auto value = position->second;
                     if (!std::isfinite(value) || value < descriptor->minimum || value > descriptor->maximum)
                         throw std::invalid_argument("导入位置超出范围");
                 }
@@ -729,7 +777,7 @@ namespace forge::application {
             std::ostringstream stream;
             stream << typeName << std::setw(3) << std::setfill('0') << ++sequence;
             candidate = stream.str(); // 例如 typeName=Box、sequence=1 得到 Box001。
-        } while (findFeature(candidate)); // 兼容未来导入带现成 ID 的文档。
+        } while (findFeatureForWrite(candidate)); // 兼容未来导入带现成 ID 的文档。
         return candidate; // 返回已确认没有与现有 Feature 冲突的稳定 ID。
     }
 

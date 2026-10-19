@@ -3,6 +3,7 @@
 #include "application/ModelDocument.h" // 本文件直接验证的文档 API。
 #include "domain/BooleanFeature.h"     // 布尔创建测试使用运算枚举。
 #include "domain/Feature.h"             // 断言需要读取查找到的 Feature 参数。
+#include "geometry/ShapeFactory.h"      // 畸形导入数据测试需要构造一个合法 B-Rep。
 
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
@@ -363,4 +364,91 @@ TEST(ModelDocumentTest, NewChangeClearsRedoHistory)
     document.setParameter("Sphere001", "radius", 40.0); // 从旧状态走出新的分支。
     EXPECT_FALSE(document.canRedo()); // radius=30 的旧未来已不属于当前时间线。
     EXPECT_DOUBLE_EQ(parameterValue(document, "Sphere001", 0), 40.0); // 新值保留。
+}
+
+// 失败的创建不能把未登记类型写进序号表，否则 exportData() 产出的数据
+// 会连 replaceData() 自己都拒绝，用户永远无法保存这份模型。
+TEST(ModelDocumentTest, FailedCreationDoesNotPolluteSequences)
+{
+    ModelDocument document;
+    EXPECT_THROW(document.createFeature("Torus", {}), std::invalid_argument);
+    EXPECT_TRUE(document.features().empty()); // 未知类型没有进入文档。
+    EXPECT_FALSE(document.canUndo());         // 也没有历史。
+    EXPECT_TRUE(document.exportData().sequences.empty()); // 未登记类型没有留下计数。
+
+    // 已登记类型但参数非法时，同样不能消耗序号，否则下一次创建会莫名跳到 Box002。
+    EXPECT_THROW(document.createFeature("Box", {{"length", -1.0}}), std::invalid_argument);
+    EXPECT_TRUE(document.exportData().sequences.empty());
+
+    // 失败后生成的数据仍是可直接重新打开的空文档。
+    ModelDocument fresh;
+    EXPECT_NO_THROW(fresh.replaceData(document.exportData()));
+    EXPECT_EQ(document.createFeature("Box", {
+        {"length", 10.0}, {"width", 10.0}, {"height", 10.0},
+    }).id(), "Box001"); // 失败没有占用 Box 的 001。
+}
+
+// 修改参数失败必须原地回滚：旧实现调用 restoreState 重建全部 Feature，
+// 会让调用方保存的 Feature* 全部悬空，并且为一次失败付出 O(n) 重建成本。
+TEST(ModelDocumentTest, FailedParameterChangeKeepsFeatureAddressAndHistory)
+{
+    ModelDocument document;
+    document.createFeature("Box", {
+        {"length", 10.0}, {"width", 10.0}, {"height", 10.0},
+    });
+    // Cone 保留一个非零半径；把另一个半径改成 0 会同时为零，
+    // 该值能通过 Registry 范围检查，但会被 Feature::validate() 拒绝。
+    document.createFeature("Cone", {
+        {"radius_bottom", 20.0}, {"radius_top", 0.0}, {"height", 30.0},
+    });
+    const auto* cone = document.findFeature("Cone001");
+    ASSERT_NE(cone, nullptr);
+    document.markSaved();
+
+    // Registry 范围检查直接拒绝，根本不会进入修改路径。
+    EXPECT_THROW(document.setParameter("Box001", "length", -1.0), std::invalid_argument);
+    // 通过范围检查、在 validate 阶段失败：必须只回滚 radius_bottom。
+    EXPECT_THROW(document.setParameter("Cone001", "radius_bottom", 0.0), std::invalid_argument);
+
+    EXPECT_EQ(document.findFeature("Cone001"), cone); // 同一对象，说明没有重建 features_。
+    EXPECT_DOUBLE_EQ(parameterValue(document, "Cone001", 0), 20.0); // 被改参数恢复旧值。
+    EXPECT_DOUBLE_EQ(parameterValue(document, "Box001", 0), 10.0);
+    EXPECT_FALSE(document.isModified()); // 失败没有推进 revision。
+
+    document.undo(); // 失败没有新增历史：这次撤销的仍是 Cone 的创建。
+    EXPECT_EQ(document.findFeature("Cone001"), nullptr);
+    EXPECT_NE(document.findFeature("Box001"), nullptr);
+}
+
+// 畸形文件缺导入位置字段时应统一报 invalid_argument，而不是泄漏 at() 的 out_of_range。
+TEST(ModelDocumentTest, ReplaceDataRejectsMalformedImportedParametersAsInvalidArgument)
+{
+    ModelDocument source;
+    source.createImportedFeature(forge::geometry::ShapeFactory::makeBox(1, 1, 1), "part.step");
+    auto data = source.exportData();
+    ASSERT_EQ(data.features.size(), 1u);
+    // 保持参数数量为 3，但把 x 换成未知名字：旧实现会从 parameters.at("x") 抛 out_of_range。
+    data.features[0].parameters.erase("x");
+    data.features[0].parameters.emplace("w", 0.0);
+
+    ModelDocument target;
+    EXPECT_THROW(target.replaceData(data), std::invalid_argument);
+    EXPECT_TRUE(target.features().empty()); // 校验失败不替换当前文档。
+}
+
+// 超长 ID 后缀不能再让 std::stoll 抛 out_of_range，而应作为业务错误统一处理。
+TEST(ModelDocumentTest, ReplaceDataRejectsOverflowingIdSuffixAsInvalidArgument)
+{
+    ModelDocument source;
+    source.createFeature("Box", {
+        {"length", 10.0}, {"width", 10.0}, {"height", 10.0},
+    });
+    auto data = source.exportData();
+    ASSERT_EQ(data.features.size(), 1u);
+    // 20 位数字超出 stoll/from_chars 的整数范围，但长度仍满足 ID 格式。
+    data.features[0].id = "Box" + std::string(20, '9');
+
+    ModelDocument target;
+    EXPECT_THROW(target.replaceData(data), std::invalid_argument);
+    EXPECT_TRUE(target.features().empty());
 }

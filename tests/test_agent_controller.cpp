@@ -50,6 +50,16 @@ QJsonObject sphere(double radius=2)
 {
     return {{"type","Sphere"},{"parameters",QJsonObject{{"radius",radius}}}};
 }
+// 制造一个与后续操作无关、但会一直留在文档里的历史失败特征：偏轴圆先旋转
+// 成环，再把草图移回原点后环截面会跨越旋转轴，Revolve001 重建必然 Failed。
+// 构造方式与 test_tool_registry.cpp 中的“上游失败”一致，用于复现
+// “文档里有旧失败特征，导致后续每次成功都被计成连续失败”的误停场景。
+void seedStaleFailedFeature(ScriptedSession& session)
+{
+    session.document.createFeature("CircleSketch",{{"radius",2},{"x",10}});
+    session.document.createRevolveFeature("CircleSketch001",360);
+    session.document.setPosition("CircleSketch001",0,0,0);
+}
 QJsonArray toolResults(const Request& request)
 {
     QJsonArray results;
@@ -302,4 +312,64 @@ TEST(AgentLoopTest, NetworkFailureAndSummaryFailureReportLocalProgressAndKeepHis
     EXPECT_FALSE(session.agent.isBusy()); EXPECT_EQ(session.document.features().size(),1);
     EXPECT_TRUE(session.answers.last().contains("24")); EXPECT_FALSE(session.errors.isEmpty());
     session.document.undo(); EXPECT_TRUE(session.document.features().empty());
+}
+
+TEST(AgentLoopTest, StaleFailedFeatureDoesNotCountSuccessfulCreatesAsFailures)
+{
+    ensureCoreApplication(); ScriptedSession session;
+    seedStaleFailedFeature(session);
+    // 前置条件：文档里确实常年存在一个旧失败特征，而后续创建都应成功。
+    const auto staleReport=session.document.rebuildReport();
+    ASSERT_FALSE(staleReport.at("Revolve001").usable());
+
+    session.agent.submit(QStringLiteral("继续加四个球"));
+    for (int i=0;i<3;++i) {
+        ASSERT_TRUE(session.tools({session.call("create_feature",sphere())}));
+        const auto results=toolResults(session.requests.back());
+        ASSERT_FALSE(results.isEmpty());
+        const auto result=results.last().toObject();
+        // 本次创建自身成功，但回执的 document_status 仍带着旧的失败特征；
+        // 旧逻辑正是用这个字段判断失败，连续三次成功后误停。
+        EXPECT_TRUE(result.value("success").toBool());
+        EXPECT_FALSE(result.value("document_status").toObject()
+            .value("failed_features").toArray().isEmpty());
+        EXPECT_EQ(session.document.features().size(),static_cast<std::size_t>(3+i));
+    }
+
+    // 三次成功之后 Agent 仍在等待下一次模型请求，并且仍允许调用工具；
+    // 旧逻辑此时会进入只汇报不执行的收尾轮（allowTools=false）。
+    EXPECT_TRUE(session.agent.isBusy());
+    ASSERT_EQ(session.requests.size(),4);
+    EXPECT_TRUE(session.requests.back().allowTools);
+
+    // 第 4 次创建继续成功，证明循环没有被旧失败特征误停。
+    ASSERT_TRUE(session.tools({session.call("create_feature",sphere())}));
+    EXPECT_TRUE(session.agent.isBusy());
+    ASSERT_EQ(session.requests.size(),5);
+    EXPECT_TRUE(session.requests.back().allowTools);
+    EXPECT_TRUE(session.document.findFeature("Sphere004")!=nullptr);
+
+    ASSERT_TRUE(session.text(QStringLiteral("已新增四个球。")));
+    EXPECT_FALSE(session.agent.isBusy());
+    for (const auto& answer : session.answers)
+        EXPECT_FALSE(answer.contains(QStringLiteral("连续三次")));
+}
+
+TEST(AgentLoopTest, GenuineFailuresStillStopEvenWithStaleFailedFeature)
+{
+    ensureCoreApplication(); ScriptedSession session;
+    seedStaleFailedFeature(session);
+    ASSERT_FALSE(session.document.rebuildReport().at("Revolve001").usable());
+    session.agent.submit("test");
+    // 本次操作真的失败：前两次只累计，第三次必须熔断，即使失败与旧特征无关。
+    for (int i=0;i<2;++i) {
+        ASSERT_TRUE(session.tools({session.call("unknown")}));
+        EXPECT_TRUE(session.agent.isBusy());
+        ASSERT_TRUE(session.requests.back().allowTools);
+    }
+    ASSERT_TRUE(session.tools({session.call("unknown")}));
+    EXPECT_FALSE(session.requests.back().allowTools);
+    ASSERT_TRUE(session.text(QStringLiteral("需要修正工具名称。")));
+    EXPECT_FALSE(session.agent.isBusy());
+    EXPECT_TRUE(session.answers.last().contains(QStringLiteral("连续三次")));
 }

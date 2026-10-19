@@ -199,10 +199,25 @@ void AgentController::handleResponse(const QJsonObject& response)
                 const auto id=result.value("feature_id").toString();
                 if (!id.isEmpty() && !changedFeatureIds_.contains(id)) changedFeatureIds_.append(id);
             }
+            // 本次工具是否失败只看本轮回执，不能用整份文档的旧失败特征顶罪：
+            // 文档里长期存在一个历史失败特征时，之后每次成功创建/改参的回执都会
+            // 带上它，旧逻辑因此把连续成功计成失败，三次后误停整个 Agent。
             const auto state=result.value("rebuild_status").toString();
-            const bool geometryFailed=state=="failed" || state=="blocked" ||
-                !result.value("document_status").toObject().value("failed_features").toArray().isEmpty();
-            consecutiveFailures_=result.value("success").toBool() && !geometryFailed ? 0 : consecutiveFailures_+1;
+            const auto featureId=result.value("feature_id").toString();
+            const auto failedFeatures=result.value("document_status").toObject()
+                .value("failed_features").toArray();
+            bool sameFeatureFailed=false;
+            for (const auto& failure : failedFeatures) {
+                // 只有“本次改动的对象自己失败”才算本次失败；其他旧失败特征不计入。
+                if (!featureId.isEmpty() &&
+                    failure.toObject().value("feature_id").toString()==featureId) {
+                    sameFeatureFailed=true;
+                    break;
+                }
+            }
+            const bool thisFailed=!result.value("success").toBool() ||
+                state=="failed" || state=="blocked" || sameFeatureFailed;
+            consecutiveFailures_=thisFailed ? consecutiveFailures_+1 : 0;
             if (result.value("cancelled").toBool()) stopAfterBatch=QStringLiteral("用户取消了操作，本轮后续工具已停止。");
             else if (result.value("pending_user_input").toBool()) stopAfterBatch=QStringLiteral("已启动点击定位，正在等待用户点击；后续工具已停止。");
             else if (consecutiveFailures_>=MaxConsecutiveFailures) stopAfterBatch=QStringLiteral("连续三次工具或几何失败，本轮后续工具已停止，请先检查参数或现有模型。");
