@@ -1,4 +1,5 @@
 #include "application/ModelDocument.h"
+#include "application/ModelCommands.h" // 文档把每次修改封装成命令，交由 CommandManager 记录。
 #include "domain/AdvancedFeature.h" // 类声明、快照类型和 NumericParameters。
 
 #include "domain/Feature.h" // 析构、读取参数和调用虚函数都需要完整 Feature 定义。
@@ -16,6 +17,7 @@
 #include <Standard_Failure.hxx>
 #include <functional>
 #include <cmath>
+#include <cstddef>   // std::size_t/std::ptrdiff_t：文档顺序下标与 vector 插入位置。
 #include <charconv>  // from_chars 用于受控解析 ID 后缀，避免 stoll 抛出 out_of_range。
 #include <system_error> // std::errc 是 from_chars 的错误码类型。
 #include <algorithm> // std::find_if 按稳定 ID 在线性容器中查找对象。
@@ -81,11 +83,13 @@ namespace forge::application {
         domain::AdvancedFeature candidate("candidate",type,parameters,definition);
         const auto checked=candidate.rebuildResult(shapes);
         if (checked.status!=core::RebuildStatus::Ready) throw std::invalid_argument(checked.message);
+        // 先用候选对象完成几何验证，再创建正式对象并交给“创建命令”。
+        // 命令持有对象直到首次 execute，因此失败时文档和 ID 序号都不会改变。
         auto feature=std::make_unique<domain::AdvancedFeature>(nextFeatureId(type),type,parameters,std::move(definition));
-        auto graph=dependencyGraph_; graph.addNode(feature->id());
-        for (const auto& id:inputs) if (!graph.addDependency(feature->id(),id)) throw std::logic_error("无法登记输入");
-        auto before=captureState(); features_.push_back(std::move(feature));dependencyGraph_=std::move(graph);
-        rememberBeforeChange(std::move(before));return *features_.back();
+        const std::string id=feature->id();
+        const std::size_t index=features_.size();
+        runCommand(std::make_unique<CreateFeatureCommand>(std::move(feature),inputs,index));
+        return *findFeatureForWrite(id);
     }
 
     void ModelDocument::setAdvancedDefinition(std::string_view id,const domain::NumericParameters& parameters,domain::FeatureDefinition definition)
@@ -100,12 +104,25 @@ namespace forge::application {
         }
         const auto checked=candidate.rebuildResult(shapes);
         if (checked.status!=core::RebuildStatus::Ready) throw std::invalid_argument(checked.message);
-        auto before=captureState();
-        for (const auto& p:candidate.parameters()) feature->setParameter(p.name(),p.asDouble());
-        feature->setDefinition(std::move(definition));rememberBeforeChange(std::move(before));
+
+        // 把“多个参数 + 结构化定义”的变化打包成一条组合命令：
+        // 一次编辑在历史上仍只占一步，但每条子命令只保存自己改动的数据，
+        // 不再复制整份文档。没有实际变化的编辑不产生历史。
+        auto composite=std::make_unique<CompositeCommand>();
+        for (const auto& parameter:candidate.parameters()) {
+            double oldValue=0.0;
+            for (const auto& current:feature->parameters())
+                if (current.name()==parameter.name()) oldValue=current.asDouble();
+            const double newValue=parameter.asDouble();
+            if (oldValue!=newValue)
+                composite->add(std::make_unique<ModifyParameterCommand>(feature->id(),parameter.name(),oldValue,newValue));
+        }
+        if (!(feature->definition()==definition))
+            composite->add(std::make_unique<SetDefinitionCommand>(feature->id(),feature->definition(),definition));
+        if (!composite->empty()) runCommand(std::move(composite));
     }
 
-    // 创建流程：分配 ID -> Registry 创建对象 -> 领域校验 -> 保存旧状态 -> 加入文档。
+    // 创建流程：分配 ID -> Registry 创建对象 -> 领域校验 -> 生成创建命令 -> 由历史栈执行并记录。
     domain::Feature& ModelDocument::createFeature(
         const std::string& type,
         const domain::NumericParameters& parameters)
@@ -127,14 +144,13 @@ namespace forge::application {
                 throw std::invalid_argument(validationError);
             }
 
-            // 只有所有校验通过后才拍快照，失败的创建不会污染 Undo 历史。
-            DocumentState before = captureState();
-            // 所有权在这里从局部 unique_ptr 转移到 features_。
-            features_.push_back(std::move(feature));
-            dependencyGraph_.addNode(id);
-            rememberBeforeChange(std::move(before));
-            // vector 保存的是 unique_ptr；返回的是它所指向 Feature 的非拥有引用。
-            return *features_.back(); // 解引用最后一个 unique_ptr，只借出对象引用，不转移所有权。
+            // 校验通过后才生成命令；命令执行失败时历史不会留下半条记录。
+            // 命令持有 unique_ptr，撤销时取回对象、重做时交还文档，ID/地址保持稳定。
+            const std::size_t index = features_.size();
+            runCommand(std::make_unique<CreateFeatureCommand>(
+                std::move(feature), std::vector<std::string>{}, index));
+            // 命令执行成功后对象已进入 features_；返回非拥有引用给调用方。
+            return *findFeatureForWrite(id);
         } catch (...) {
             // 失败创建必须像从未发生：恢复序号表，且 features_/依赖图/历史/revision 都没有改动。
             sequenceByType_ = std::move(sequencesBefore);
@@ -150,13 +166,11 @@ namespace forge::application {
         BRepBuilderAPI_Copy copy(shape, true, false);
         auto geometry = std::make_shared<const TopoDS_Shape>(copy.Shape());
         auto feature = std::make_unique<domain::ImportedFeature>(nextFeatureId("Imported"), geometry, sourceName);
-        DocumentState before = captureState();
-        auto updatedGraph = dependencyGraph_;
-        updatedGraph.addNode(feature->id());
-        features_.push_back(std::move(feature));
-        dependencyGraph_ = std::move(updatedGraph);
-        rememberBeforeChange(std::move(before));
-        return *features_.back();
+        const std::string id = feature->id();
+        const std::size_t index = features_.size();
+        runCommand(std::make_unique<CreateFeatureCommand>(std::move(feature),
+            std::vector<std::string>{}, index));
+        return *findFeatureForWrite(id);
     }
 
     domain::Feature& ModelDocument::createBooleanFeature(
@@ -171,20 +185,11 @@ namespace forge::application {
 
         const std::string id = nextFeatureId(booleanTypeName(operation));
         auto feature = std::make_unique<domain::BooleanFeature>(id, operation);
-
-        // 在副本中把两条边按 base、tool 顺序加好，避免只添加一条边的半成品。
-        domain::DependencyGraph updatedGraph = dependencyGraph_;
-        updatedGraph.addNode(id);
-        if (!updatedGraph.addDependency(id, std::string(baseId)) ||
-            !updatedGraph.addDependency(id, std::string(toolId))) {
-            throw std::logic_error("无法登记布尔特征依赖关系");
-        }
-
-        DocumentState before = captureState();
-        features_.push_back(std::move(feature));
-        dependencyGraph_ = std::move(updatedGraph);
-        rememberBeforeChange(std::move(before));
-        return *features_.back();
+        // 两个输入的顺序会成为依赖图里的边顺序，命令重做时按同一顺序恢复。
+        const std::vector<std::string> inputs{std::string(baseId), std::string(toolId)};
+        const std::size_t index = features_.size();
+        runCommand(std::make_unique<CreateFeatureCommand>(std::move(feature), inputs, index));
+        return *findFeatureForWrite(id);
     }
 
     domain::Feature& ModelDocument::createExtrudeFeature(std::string_view sketchId, double height, domain::ExtrudeDirection direction)
@@ -202,15 +207,11 @@ namespace forge::application {
         const auto checked=candidate.rebuildResult({report.at(std::string(sketchId)).shape});
         if (checked.status!=core::RebuildStatus::Ready) throw std::invalid_argument(checked.message);
         auto feature = std::make_unique<domain::ExtrudeFeature>(nextFeatureId("Extrude"),height,direction);
-        auto graph = dependencyGraph_;
-        graph.addNode(feature->id());
-        if (!graph.addDependency(feature->id(),std::string(sketchId)))
-            throw std::logic_error("无法登记拉伸草图依赖");
-        auto before = captureState();
-        features_.push_back(std::move(feature));
-        dependencyGraph_ = std::move(graph);
-        rememberBeforeChange(std::move(before));
-        return *features_.back();
+        const std::string id = feature->id();
+        const std::size_t index = features_.size();
+        runCommand(std::make_unique<CreateFeatureCommand>(std::move(feature),
+            std::vector<std::string>{std::string(sketchId)}, index));
+        return *findFeatureForWrite(id);
     }
 
     domain::Feature& ModelDocument::createExtrudeCutFeature(std::string_view baseId,
@@ -230,16 +231,11 @@ namespace forge::application {
         const auto checked=candidate.rebuildResult({report.at(std::string(baseId)).shape,report.at(std::string(sketchId)).shape});
         if (!checked.usable()) throw std::invalid_argument(checked.message);
         auto feature=std::make_unique<domain::ExtrudeCutFeature>(nextFeatureId("ExtrudeCut"),height,direction);
-        auto graph=dependencyGraph_;
-        graph.addNode(feature->id());
-        if (!graph.addDependency(feature->id(),std::string(baseId)) ||
-            !graph.addDependency(feature->id(),std::string(sketchId)))
-            throw std::logic_error("无法登记拉伸切除依赖");
-        auto before=captureState();
-        features_.push_back(std::move(feature));
-        dependencyGraph_=std::move(graph);
-        rememberBeforeChange(std::move(before));
-        return *features_.back();
+        const std::string id = feature->id();
+        const std::vector<std::string> inputs{std::string(baseId), std::string(sketchId)};
+        const std::size_t index = features_.size();
+        runCommand(std::make_unique<CreateFeatureCommand>(std::move(feature), inputs, index));
+        return *findFeatureForWrite(id);
     }
 
     domain::Feature& ModelDocument::createRevolveFeature(std::string_view sketchId, double angle, domain::RevolveAxis axis)
@@ -257,12 +253,11 @@ namespace forge::application {
         const auto geometry=candidate.rebuildResult({report.at(std::string(sketchId)).shape});
         if (!geometry.usable()) throw std::invalid_argument(geometry.message);
         auto feature=std::make_unique<domain::RevolveFeature>(nextFeatureId("Revolve"),angle,axis);
-        auto graph=dependencyGraph_; graph.addNode(feature->id());
-        if (!graph.addDependency(feature->id(),std::string(sketchId)))
-            throw std::logic_error("无法登记旋转草图依赖");
-        auto before=captureState(); features_.push_back(std::move(feature));
-        dependencyGraph_=std::move(graph); rememberBeforeChange(std::move(before));
-        return *features_.back();
+        const std::string id = feature->id();
+        const std::size_t index = features_.size();
+        runCommand(std::make_unique<CreateFeatureCommand>(std::move(feature),
+            std::vector<std::string>{std::string(sketchId)}, index));
+        return *findFeatureForWrite(id);
     }
 
     void ModelDocument::addDependency(
@@ -276,16 +271,19 @@ namespace forge::application {
             dynamic_cast<const domain::AdvancedFeature*>(findFeature(featureId))) {
             throw std::invalid_argument("此特征的输入只能在创建时指定");
         }
-        // 图负责拒绝未知节点、重复关系和循环；失败时文档与历史都保持原样。
-        DocumentState before = captureState();
-        if (!dependencyGraph_.addDependency(
+        // 先在副本上验证边是否合法（两端存在、不重复、不成环），
+        // 这样失败时仍抛 invalid_argument，且命令不会执行到一半。
+        domain::DependencyGraph candidate = dependencyGraph_;
+        if (!candidate.addDependency(
                 std::string(featureId), std::string(dependsOnId))) {
             throw std::invalid_argument("无法添加特征依赖关系");
         }
-        rememberBeforeChange(std::move(before));
+        // 命令重做时依赖图必须仍能接受这条边；首次执行与校验结果一致。
+        runCommand(std::make_unique<AddDependencyCommand>(
+            std::string(featureId), std::string(dependsOnId)));
     }
 
-    // 参数修改流程：定位对象 -> 查参数规则 -> 保存旧状态 -> 修改 -> 领域校验。
+    // 参数修改流程：定位对象 -> 查参数规则 -> 校验 -> 生成“修改参数命令”。
     std::vector<std::string> ModelDocument::dependenciesOf(std::string_view featureId) const
     {
         if (!findFeature(featureId)) throw std::invalid_argument("找不到依赖查询对象");
@@ -312,24 +310,24 @@ namespace forge::application {
                 feature->type() + " 参数超出范围: " + std::string(parameterName));
         }
 
-        for (const auto& parameter : feature->parameters())
-            if (parameter.name() == parameterName && parameter.asDouble() == value) return;
-        // 只需记录被修改参数的旧值：领域校验失败时原地写回这一项即可，
-        // 不能调用 restoreState 整体重建 features_，否则外部持有的 Feature* 全部失效且代价 O(n)。
         double previousValue = value;
         for (const auto& parameter : feature->parameters())
             if (parameter.name() == parameterName) previousValue = parameter.asDouble();
-        // 成功路径仍然需要完整快照来支持 Undo；快照复制的是修改前的参数值。
-        DocumentState before = captureState();
+        if (previousValue == value) return; // 值没变：不产生历史。
+
+        // 先在真实对象上试写并做跨参数校验（例如圆台两个半径不能同时为零），
+        // 失败时原地恢复旧值；旧的“整文档 restoreState”重建已被命令模式取代。
         feature->setParameter(std::string(parameterName), value);
         const std::string validationError = feature->validate();
         if (!validationError.empty()) {
-            feature->setParameter(std::string(parameterName), previousValue); // 只回滚这个参数。
+            feature->setParameter(std::string(parameterName), previousValue);
             throw std::invalid_argument(validationError);
         }
-
-        // 修改成功后旧状态成为一次可撤销记录，并废弃旧的 Redo 分支。
-        rememberBeforeChange(std::move(before));
+        // 校验通过后把对象恢复到修改前，再让命令正式执行这次修改，
+        // 保证“第一次 execute”与“Redo”走完全相同的代码路径。
+        feature->setParameter(std::string(parameterName), previousValue);
+        runCommand(std::make_unique<ModifyParameterCommand>(
+            std::string(featureId), std::string(parameterName), previousValue, value));
     }
 
     void ModelDocument::setPosition(std::string_view featureId, double x, double y, double z)
@@ -346,52 +344,47 @@ namespace forge::application {
                 if (parameter.name()==name && parameter.asDouble()!=value) changed=true;
         }
         if (!changed) return;
-        // 只记录三个坐标旧值：校验失败时原地写回，不能用 restoreState 重建整个文档，
-        // 否则调用方持有的 Feature* 会失效，失败路径也要付出 O(n) 的重建成本。
         double oldX=0.0, oldY=0.0, oldZ=0.0;
         for (const auto& parameter : feature->parameters()) {
             if (parameter.name()=="x") oldX=parameter.asDouble();
             else if (parameter.name()=="y") oldY=parameter.asDouble();
             else if (parameter.name()=="z") oldZ=parameter.asDouble();
         }
-        auto before=captureState();
+        // 试写三个坐标并做跨参数校验，失败则原地恢复；成功也先恢复，
+        // 再交给组合命令正式执行，使首次执行与 Redo 对称。
         try {
             for (const auto& [name,value] : values) feature->setParameter(name,value);
             const auto error=feature->validate();
             if (!error.empty()) throw std::invalid_argument(error);
         } catch (...) {
-            // 恢复三个旧值；对象地址和其余参数保持原样。
             feature->setParameter("x",oldX);
             feature->setParameter("y",oldY);
             feature->setParameter("z",oldZ);
             throw;
         }
-        rememberBeforeChange(std::move(before));
+        feature->setParameter("x",oldX);
+        feature->setParameter("y",oldY);
+        feature->setParameter("z",oldZ);
+        // 一次点击定位/一次 XYZ 编辑只占一条历史：组合命令内部是三条增量修改。
+        auto composite=std::make_unique<CompositeCommand>();
+        for (const auto& [name,value] : values) {
+            const double oldValue = name=="x" ? oldX : name=="y" ? oldY : oldZ;
+            if (oldValue!=value)
+                composite->add(std::make_unique<ModifyParameterCommand>(
+                    std::string(featureId), name, oldValue, value));
+        }
+        if (!composite->empty()) runCommand(std::move(composite));
     }
 
-    // 删除不把 Feature 临时交给其他对象；快照里已经保存了恢复它所需的全部数据。
+    // 删除：命令在构造阶段读取级联范围/顺序/依赖，execute 时才移出对象。
     void ModelDocument::deleteFeature(std::string_view featureId)
     {
-        const auto it = std::find_if(
-            features_.begin(), features_.end(),
-            [featureId](const auto& feature) {
-                return feature->id() == featureId;
-            });
-        if (it == features_.end()) {
+        if (!findFeature(featureId)) {
             throw std::invalid_argument(
                 "找不到要删除的 Feature: " + std::string(featureId));
         }
-
-        // 先保存完整模型及依赖图；整组级联删除只占一条 Undo 历史。
-        DocumentState before = captureState();
-        const auto removed = dependencyGraph_.removeNodeAndDependents(std::string(featureId));
-
-        for (const std::string& id : removed) {
-            std::erase_if(features_, [&id](const auto& feature) {
-                return feature->id() == id;
-            });
-        }
-        rememberBeforeChange(std::move(before));
+        runCommand(std::make_unique<DeleteFeatureCommand>(
+            *this, std::string(featureId)));
     }
 
     std::vector<std::string> ModelDocument::deletionOrder(
@@ -407,40 +400,31 @@ namespace forge::application {
 
     void ModelDocument::undo()
     {
-        if (undoStack_.empty()) {
-            return; // 空栈时撤销是安全空操作，调用方无需捕获异常。
+        // CommandManager 调用栈顶命令的 undo()，并交还该状态对应的 revision。
+        // 空栈直接返回 false，撤销在 UI 上就是安全空操作。
+        std::uint64_t restoredRevision = revision_;
+        if (history_.undo(*this, restoredRevision)) {
+            revision_ = restoredRevision;
         }
-
-        // 当前状态稍后可用于 Redo；Undo 栈顶则是需要恢复的上一个状态。
-        DocumentState current = captureState();
-        DocumentState previous = std::move(undoStack_.back());
-        undoStack_.pop_back();                     // 移出后删除已使用的 Undo 栈顶槽位。
-        restoreState(previous);                    // 用上一个状态替换当前文档内容。
-        redoStack_.push_back(std::move(current));  // 保存刚离开的状态，供 Redo 返回。
     }
 
     void ModelDocument::redo()
     {
-        if (redoStack_.empty()) {
-            return; // 没有未来状态时重做同样是安全空操作。
+        // Redo 重新 execute() 同一条命令，并恢复它执行后的 revision。
+        std::uint64_t restoredRevision = revision_;
+        if (history_.redo(*this, restoredRevision)) {
+            revision_ = restoredRevision;
         }
-
-        // Redo 与 Undo 对称：保存当前状态，再恢复 Redo 栈顶。
-        DocumentState current = captureState();
-        DocumentState next = std::move(redoStack_.back());
-        redoStack_.pop_back();                    // 删除已经取出的 Redo 栈顶槽位。
-        restoreState(next);                       // 前进到此前撤销掉的状态。
-        undoStack_.push_back(std::move(current)); // 保存出发点，使这次 Redo 还能再次 Undo。
     }
 
     bool ModelDocument::canUndo() const
     {
-        return !undoStack_.empty(); // 取反后 true 表示至少有一个可恢复的过去状态。
+        return history_.canUndo(); // 命令栈非空才允许撤销。
     }
 
     bool ModelDocument::canRedo() const
     {
-        return !redoStack_.empty(); // true 表示当前时间线存在可重新应用的未来状态。
+        return history_.canRedo(); // Redo 栈非空才允许重做。
     }
 
     domain::Feature* ModelDocument::findFeatureForWrite(std::string_view id)
@@ -750,7 +734,8 @@ namespace forge::application {
         restoreState(state);
         sequenceByType_.swap(sequences);
         documentId_.swap(identity);
-        undoStack_.clear(); redoStack_.clear();
+        // 打开/替换文档是一条新时间线：旧命令栈里的命令持有旧文档对象，必须全部丢弃。
+        history_.clear();
         revision_ = nextRevision_++;
         savedRevision_ = revision_;
     }
@@ -760,7 +745,7 @@ namespace forge::application {
         features_.swap(other.features_);
         std::swap(dependencyGraph_,other.dependencyGraph_);
         sequenceByType_.swap(other.sequenceByType_);
-        undoStack_.swap(other.undoStack_); redoStack_.swap(other.redoStack_);
+        history_.swap(other.history_);
         documentId_.swap(other.documentId_);
         std::swap(revision_,other.revision_);
         std::swap(savedRevision_,other.savedRevision_);
@@ -781,32 +766,109 @@ namespace forge::application {
         return candidate; // 返回已确认没有与现有 Feature 冲突的稳定 ID。
     }
 
-    ModelDocument::DocumentState ModelDocument::captureState() const
+    // ============================================================
+    // 命令模式内部原语
+    // ------------------------------------------------------------
+    // 公开 API 负责“校验 + 生成命令 + 压栈”，命令负责“精确执行/撤销”。
+    // 以下方法不记录历史，只做最小增量修改；命令通过 friend 访问它们。
+    // ============================================================
+    void ModelDocument::runCommand(std::unique_ptr<Command> command)
     {
-        // 深拷贝的是轻量字符串和数值，不复制 unique_ptr，也不计算 OCCT Shape。
-        DocumentState state;
-        state.revision = revision_;
-        state.features.reserve(features_.size()); // 已知最终项数，预留空间避免 push 时重复扩容。
-        for (const auto& feature : features_) {
-            FeatureState saved{feature->id(), feature->type(), {}};
-            for (const auto& parameter : feature->parameters()) {
-                // 只保存能重建 Feature 的业务数据，不保存指针或派生几何缓存。
-                saved.parameters.emplace(parameter.name(), parameter.asDouble());
-            }
-            if (const auto* imported = dynamic_cast<const domain::ImportedFeature*>(feature.get())) {
-                saved.importedGeometry = imported->geometry();
-                saved.sourceName = imported->sourceName();
-            }
-            if (const auto* advanced=dynamic_cast<const domain::AdvancedFeature*>(feature.get())) saved.definition=advanced->definition();
-            state.features.push_back(std::move(saved)); // 移入快照并保留与当前文档一致的对象顺序。
+        if (!command) throw std::logic_error("不能执行空命令");
+        const std::uint64_t revisionBefore = revision_;
+        // 先占一个新版本号；命令失败时 revision_ 不变，只是版本号出现空洞（无害）。
+        const std::uint64_t revisionAfter = nextRevision_++;
+        // record() 内部先 execute()，成功后才压栈；失败命令不会污染历史。
+        history_.record(std::move(command), *this, revisionBefore, revisionAfter);
+        revision_ = revisionAfter;
+    }
+
+    void ModelDocument::insertFeatureRaw(std::unique_ptr<domain::Feature> feature, std::size_t index)
+    {
+        if (!feature) throw std::logic_error("不能插入空特征");
+        const std::string id = feature->id();
+        if (findFeatureForWrite(id)) {
+            throw std::logic_error("重复的特征 ID: " + id);
         }
-        state.graph = dependencyGraph_;
-        return state; // 返回独立深拷贝；之后修改当前文档不会改变这张照片。
+        // 先在依赖图副本上登记节点：分配失败时文档保持原样（强异常保证）。
+        domain::DependencyGraph graph = dependencyGraph_;
+        graph.addNode(id);
+        // index 记录的是创建时在文档中的位置；撤销/重做后仍插回同一顺序。
+        const std::size_t position = std::min(index, features_.size());
+        features_.insert(features_.begin() + static_cast<std::ptrdiff_t>(position),
+                         std::move(feature));
+        dependencyGraph_ = std::move(graph);
+    }
+
+    std::unique_ptr<domain::Feature> ModelDocument::takeFeatureRaw(
+        std::string_view id, std::size_t& index)
+    {
+        const auto it = std::find_if(
+            features_.begin(), features_.end(),
+            [id](const auto& feature) { return feature->id() == id; });
+        if (it == features_.end()) {
+            throw std::logic_error("要撤销的特征不存在: " + std::string(id));
+        }
+        // 仍被下游依赖时不能单独移出，否则依赖图会指向不存在的节点。
+        // LIFO 撤销保证依赖方已经先被撤销/删除；这里仍做防御性检查。
+        if (!dependencyGraph_.removeNode(std::string(id))) {
+            throw std::logic_error("特征仍被下游依赖，不能单独撤销: " + std::string(id));
+        }
+        index = static_cast<std::size_t>(it - features_.begin());
+        auto feature = std::move(*it);
+        features_.erase(it);
+        return feature;
+    }
+
+    std::size_t ModelDocument::indexOfFeature(std::string_view id) const
+    {
+        const auto it = std::find_if(
+            features_.begin(), features_.end(),
+            [id](const auto& feature) { return feature->id() == id; });
+        if (it == features_.end()) {
+            throw std::logic_error("特征不存在: " + std::string(id));
+        }
+        return static_cast<std::size_t>(it - features_.begin());
+    }
+
+    void ModelDocument::setFeatureParameterRaw(std::string_view id,
+        std::string_view parameterName, double value)
+    {
+        domain::Feature* feature = findFeatureForWrite(id);
+        if (!feature) throw std::logic_error("特征不存在: " + std::string(id));
+        // 命令负责回放已经校验过的值，不再重复做范围/跨参数校验。
+        feature->setParameter(std::string(parameterName), value);
+    }
+
+    void ModelDocument::setFeatureDefinitionRaw(std::string_view id,
+        domain::FeatureDefinition definition)
+    {
+        auto* feature = dynamic_cast<domain::AdvancedFeature*>(findFeatureForWrite(id));
+        if (!feature) throw std::logic_error("特征不支持结构化定义: " + std::string(id));
+        feature->setDefinition(std::move(definition));
+    }
+
+    void ModelDocument::addDependencyRaw(std::string_view featureId,
+        std::string_view dependsOnId)
+    {
+        if (!dependencyGraph_.addDependency(
+                std::string(featureId), std::string(dependsOnId))) {
+            throw std::logic_error("命令无法恢复依赖关系: " + std::string(featureId)
+                + " -> " + std::string(dependsOnId));
+        }
+    }
+
+    bool ModelDocument::removeDependencyRaw(std::string_view featureId,
+        std::string_view dependsOnId)
+    {
+        return dependencyGraph_.removeDependency(
+            std::string(featureId), std::string(dependsOnId));
     }
 
     void ModelDocument::restoreState(const DocumentState& state)
     {
-        // 先根据快照里的模型数据，重新创建全部 Feature。
+        // 仅用于打开文档：先在临时容器重建全部 Feature，成功后再整体替换。
+        // Undo/Redo 不再走这里，而是由命令逐条回放增量修改。
         std::vector<std::unique_ptr<domain::Feature>> restored;
         restored.reserve(state.features.size());
 
@@ -851,14 +913,6 @@ namespace forge::application {
         features_ = std::move(restored);
         dependencyGraph_ = std::move(restoredGraph);
         revision_ = state.revision;
-    }
-
-    void ModelDocument::rememberBeforeChange(DocumentState state)
-    {
-        // 用户在 Undo 后做出新修改时，旧 Redo 分支已经不再属于当前时间线。
-        undoStack_.push_back(std::move(state)); // vector 末尾作为最新可撤销状态。
-        redoStack_.clear(); // 新操作形成新时间线，旧 Redo 路径不再有效。
-        revision_ = nextRevision_++;
     }
 
 } // namespace forge::application

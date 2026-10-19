@@ -195,6 +195,31 @@ std::vector<std::string> DependencyGraph::removeNodeAndDependents(const std::str
     return removed;
 }
 
+bool DependencyGraph::removeNode(const std::string &id) {
+    // 仍被其他特征依赖时不能只删节点，否则会留下指向不存在节点的依赖边。
+    // 命令模式按 LIFO 撤销，调用方会先撤销/删除下游；这里仍做防御性检查。
+    if (!deps_.contains(id) || !dependentsOf(id).empty()) {
+        return false;
+    }
+    deps_.erase(id);
+    return true;
+}
+
+bool DependencyGraph::removeDependency(
+    const std::string &featureId, const std::string &dependsOnId) {
+    const auto it = deps_.find(featureId);
+    if (it == deps_.end()) {
+        return false;
+    }
+    auto& dependencies = it->second;
+    const auto found = std::find(dependencies.begin(), dependencies.end(), dependsOnId);
+    if (found == dependencies.end()) {
+        return false;
+    }
+    dependencies.erase(found); // 只删这一条边，其他依赖顺序保持不变。
+    return true;
+}
+
 std::vector<std::string> DependencyGraph::topologicalOrder() const
 {
     // remaining["B"] = 1 表示 B 还有一个必须先算的特征。

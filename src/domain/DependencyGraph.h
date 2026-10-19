@@ -35,6 +35,11 @@ public:
     std::vector<std::string> downstreamOf(const std::string& id) const;
     std::vector<std::string> deletionOrder(const std::string& id) const;
     std::vector<std::string> removeNodeAndDependents(const std::string& id);
+    // 命令模式撤销创建/级联删除时使用的最小图操作。
+    // removeNode 只删除一个节点及其出边，仍被下游依赖时返回 false 且不改图；
+    // removeDependency 只删除一条已存在的边（用于撤销 addDependency）。
+    bool removeNode(const std::string& id);
+    bool removeDependency(const std::string& featureId, const std::string& dependsOnId);
     // 返回整张图的计算顺序：每个编号都排在依赖它的编号之前。
     // 例如 B 依赖 A、C 依赖 B，结果为 [A, B, C]。
     // 互不依赖的编号按字母顺序选择，便于重复运行得到相同结果。

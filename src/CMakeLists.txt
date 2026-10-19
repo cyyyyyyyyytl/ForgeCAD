@@ -9,6 +9,8 @@ add_library(forgecore
     core/Version.cpp
     # application：UI/AI 共用的模型入口、所有权和历史记录。
     application/ModelDocument.cpp
+    application/CommandManager.cpp
+    application/ModelCommands.cpp
     # assistant：DeepSeek 网络适配、Agent 循环和工具白名单。
     assistant/AgentController.cpp
     assistant/DeepSeekClient.cpp
