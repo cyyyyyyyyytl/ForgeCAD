@@ -19,6 +19,7 @@
 #include <cmath>
 #include <QWheelEvent>                  // 滚轮增量用于缩放相机。
 #include <QTimer>                       // QTimer::singleShot：延迟执行（首次重绘用）
+#include <QStandardPaths>               // 取系统临时目录：日志路径不能再写死某台机器。
 
 // ---- OCCT：图形驱动（OpenGL 后端）----
 #include <OpenGl_GraphicDriver.hxx>       // OpenGL 图形驱动
@@ -48,12 +49,17 @@
 
 namespace forge::ui {
 
-// 简易诊断日志：写到 C:\Users\15389\AppData\Local\Temp\forgecad_viewport.log
+// 简易诊断日志：写到系统临时目录下的 forgecad_viewport.log
 //   （qDebug 在 GUI 程序里看不到，用文件最可靠）
+//   以前这里写死了某个用户的 AppData 路径，换机器/换账号就会静默写失败；
+//   改用 Qt 提供的系统临时目录，任何用户、任何平台都能落到可写位置。
 static void diagLog(const char* msg)
 {
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    if (dir.isEmpty()) return; // 取不到临时目录时直接跳过：诊断日志绝不能影响主流程。
     // 追加模式保留每一次初始化过程，程序重启后仍可对比历史。
-    FILE* f = fopen("C:\\Users\\15389\\AppData\\Local\\Temp\\forgecad_viewport.log", "a");
+    const QByteArray path = (dir + QStringLiteral("/forgecad_viewport.log")).toLocal8Bit();
+    FILE* f = fopen(path.constData(), "a");
     if (f) {
         fprintf(f, "%s\n", msg); // 每条消息单独占一行，便于按时间阅读。
         fclose(f);                 // 及时关闭文件，确保异常退出前内容已刷新。
@@ -134,14 +140,15 @@ void Viewport3D::initViewer()
 
         // 关键：创建"中立窗口"并告诉它当前控件尺寸。
         //   不用 WNT_Window 绑定 HWND，避免 Qt6 下视图消失的 bug。
-        auto aWin = new Aspect_NeutralWindow(); // OCCT Handle 会管理中立窗口对象。
+        //   句柄保存在成员 window_ 里——以后每次 resize 都要把新尺寸写回这个窗口。
+        window_ = new Aspect_NeutralWindow(); // OCCT Handle 会管理中立窗口对象。
         // 必须把 Qt 控件的原生句柄(HWND)告诉 OCCT——
         //   否则 NeutralWindow::NativeHandle() 返回 0，OCCT 不知道往哪画（空白！）
         //   winId() 返回 WId(=quintptr)，先转成 void* 再转 Aspect_Drawable
         auto hwnd = reinterpret_cast<void*>(winId()); // 从 Qt WId 取得平台原生窗口句柄。
-        aWin->SetNativeHandle(reinterpret_cast<Aspect_Drawable>(hwnd));
-        aWin->SetSize(width(), height());          // 窗口大小 = 控件大小
-        view_->SetWindow(aWin); // 把 OCCT View 的输出目标绑定到当前 QWidget。
+        window_->SetNativeHandle(reinterpret_cast<Aspect_Drawable>(hwnd));
+        window_->SetSize(width(), height());       // 窗口大小 = 控件大小
+        view_->SetWindow(window_); // 把 OCCT View 的输出目标绑定到当前 QWidget。
         view_->TriedronDisplay(
             Aspect_TOTP_LEFT_LOWER,
             Quantity_NOC_WHITE,
@@ -247,7 +254,18 @@ void Viewport3D::showEvent(QShowEvent*)
     if (!inited_) {
         inited_ = true; // 先置位，避免初始化期间再次收到 showEvent 而重入。
         initViewer();   // 此时 winId、宽高和平台窗口都已可用。
+    } else {
+        // 从隐藏/最小化恢复：重新开启刷新。
+        //   隐藏期间 OCCT 画面无人看，继续每 33ms 调 Redraw 只是白烧 CPU/GPU。
+        refreshTimer_.start();
     }
+}
+
+// 窗口隐藏（最小化、切换到其他页面或父窗口关闭）时停止刷新定时器：
+//   定时器在隐藏状态下仍会每 33ms 调 view_->Redraw()，不可见的窗口重绘没有意义。
+void Viewport3D::hideEvent(QHideEvent*)
+{
+    refreshTimer_.stop();
 }
 
 // paintEvent 留空：重绘完全由 refreshTimer_ 驱动（直接调 view_->Redraw()）。
@@ -257,9 +275,15 @@ void Viewport3D::paintEvent(QPaintEvent*)
     // 故意留空（定时器会负责重绘）
 }
 
-// 窗口大小变化时 → 更新 OCCT 视图尺寸
+// 窗口大小变化时 → 先更新中立窗口尺寸，再通知 OCCT 重新分配画布。
+//   为什么不能只调 MustBeResized()：Aspect_NeutralWindow::DoResize() 是空实现，
+//   OCCT 不会自己从 Qt 控件取新尺寸；不手动 SetSize，画布会一直按旧尺寸绘制
+//   （表现为缩放窗口后画面被拉伸/只画在左上角）。
 void Viewport3D::resizeEvent(QResizeEvent*)
 {
+    if (!window_.IsNull()) {
+        window_->SetSize(width(), height()); // 把 Qt 的新控件尺寸同步给中立窗口。
+    }
     if (view_) {
         view_->MustBeResized();   // 通知 OCCT 尺寸变了（内部会重新分配画布）
     }

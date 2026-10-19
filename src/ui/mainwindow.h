@@ -105,7 +105,7 @@ private:
     void selectFeature(const std::string& id);         // 按稳定 ID 切换选中项
     void rebuildParamPanel();                          // 按"选中特征"动态重建属性面板
     void refreshViewport(bool fitAll = true);                            // 选中特征 → 重建形状 → 显示 → 状态栏
-    void refreshAfterHistoryChange();                  // Undo/Redo 后统一修正选中项并刷新 UI
+    void refreshAfterHistoryChange(bool fitAll = true);                  // Undo/Redo 后统一修正选中项并刷新 UI
     void updateRebuildFeedback();
     void setupAssistantDialog();                       // 连接 Designer AI 窗口与 Agent
 };

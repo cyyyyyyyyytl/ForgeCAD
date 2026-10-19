@@ -16,10 +16,12 @@
 #include <QWidget>                    // 基类：Qt 的"控件"（能放进窗口的东西）
 #include <QTimer>                     // 定时器：持续刷新画面（OCCT 不会自己重绘）
 #include <QPoint>                     // 保存按下位置和上一帧鼠标位置。
+#include <QHideEvent>                 // hideEvent 的参数类型（窗口隐藏/最小化时停刷新）。
 #include <vector>                     // std::vector：一次接收并显示多个形状
 
 // ---- OCCT 部分 ----
 #include <AIS_InteractiveContext.hxx> // 场景管理器：管"显示哪些物体"
+#include <Aspect_NeutralWindow.hxx>   // 中立窗口：需要保存句柄，resize 时把新尺寸同步给 OCCT
 #include <V3d_View.hxx>               // 3D 视图：相机视角 + 画布
 #include <V3d_Viewer.hxx>             // 3D 场景：容纳多个 View
 #include <TopoDS_Shape.hxx>           // OCCT 形状类型（Box 等）
@@ -66,6 +68,7 @@ protected:
     void paintEvent(QPaintEvent*) override;    // 窗口需要重绘时被调用
     void resizeEvent(QResizeEvent*) override;  // 窗口大小变化时被调用
     void showEvent(QShowEvent*) override;      // 窗口首次显示时被调用
+    void hideEvent(QHideEvent*) override;      // 窗口隐藏/最小化时被调用（停掉刷新定时器）
     void mousePressEvent(QMouseEvent*) override;   // 鼠标按下
     void mouseMoveEvent(QMouseEvent*) override;    // 鼠标移动
     void mouseReleaseEvent(QMouseEvent*) override; // 鼠标释放/完成点击选择
@@ -90,6 +93,9 @@ private:
 
     // OCCT 的"句柄"（智能指针）——对象生命周期自动管理
     occ::handle<V3d_Viewer>             viewer_;    // 场景容器
+    // 保存中立窗口句柄：OCCT 的 DoResize() 是空实现，窗口尺寸必须由应用在
+    // resizeEvent 里主动写回，否则画布一直停留在初始化时的尺寸。
+    occ::handle<Aspect_NeutralWindow>   window_;    // 中立窗口（Qt 管窗口，OCCT 只管画）
     occ::handle<V3d_View>               view_;      // 视图（画布+相机）
     occ::handle<AIS_InteractiveContext> context_;   // 场景管理器（显示/隐藏物体）
     // 一个 TopoDS_Shape 需要包装成一个 AIS_Shape 才能显示。

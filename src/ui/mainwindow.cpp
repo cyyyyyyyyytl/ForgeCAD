@@ -426,7 +426,8 @@ void MainWindow::on_actionUndo_triggered()
     }
 
     document_.undo();            // 领域状态先恢复到上一张快照。
-    refreshAfterHistoryChange(); // 再让树、属性面板和视口同步新状态。
+    // 撤销后保持当前观察视角：参数恢复不应让相机跳回全局适配，方便对照撤销前后。
+    refreshAfterHistoryChange(false); // 再让树、属性面板和视口同步新状态。
 }
 
 void MainWindow::on_actionRedo_triggered()
@@ -437,7 +438,8 @@ void MainWindow::on_actionRedo_triggered()
     }
 
     document_.redo();            // 领域状态前进到 Redo 栈顶快照。
-    refreshAfterHistoryChange(); // 所有展示层从 Document 重新读取。
+    // 重做与撤销保持一致：保留相机，避免每按一次 Ctrl+Y 视角都被重置。
+    refreshAfterHistoryChange(false); // 所有展示层从 Document 重新读取。
 }
 
 void MainWindow::on_actionDeleteFeature_triggered()
@@ -742,7 +744,14 @@ void MainWindow::rebuildParamPanel()
             const auto label=p.name()=="plane"?QStringLiteral("草图平面"):p.name()=="closed"?QStringLiteral("闭合"):p.name()=="ruled"?QStringLiteral("直纹面"):QStringLiteral("自动对齐截面");form->addRow(label,combo);
             connect(combo,&QComboBox::currentIndexChanged,this,[this,featureId,combo,name=p.name()](int value){
                 try {document_.setParameter(featureId,name,value);refreshViewport(false);}
-                catch(const std::exception& e){statusBar()->showMessage(QString::fromUtf8(e.what()));const auto* f=document_.findFeature(featureId);for(const auto& p:f->parameters())if(p.name()==name){QSignalBlocker block(combo);combo->setCurrentIndex(static_cast<int>(p.asDouble()));}}
+                catch(const std::exception& e){
+                    statusBar()->showMessage(QString::fromUtf8(e.what()));
+                    // 特征可能已被撤销/删除：先判空，避免在失败回写路径上解引用空指针。
+                    const auto* f=document_.findFeature(featureId);
+                    if(!f) return;
+                    for(const auto& p:f->parameters())
+                        if(p.name()==name){QSignalBlocker block(combo);combo->setCurrentIndex(static_cast<int>(p.asDouble()));}
+                }
             });continue;
         }
         if (feature->type()=="Revolve" && p.name()=="axis") {
@@ -795,14 +804,21 @@ void MainWindow::rebuildParamPanel()
 
         // ★ 动态控件没有固定的 on_ 名字 → 手动 connect（lambda 捕获参数名）。
         //   箭头调整会立即提交；键盘输入则在编辑完成后只提交最终数值。
+        //   lastAccepted 按值捕获当前模型值并随提交成功更新——catch 里用它回滚界面。
         connect(spin, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
-                [this, featureId, paramName = p.name()](double v) {
+                [this, spin, featureId, paramName = p.name(), lastAccepted = p.asDouble()](double v) mutable {
                     try {
                         document_.setParameter(featureId, paramName, v);
+                        lastAccepted = v; // 记住模型已接受的值，供后续失败时回滚。
                         refreshViewport(false); // 保持观察视角，便于判断位置和尺寸的变化。
                     } catch (const std::invalid_argument& e) {
                         statusBar()->showMessage(
                             QStringLiteral("修改失败: %1").arg(e.what()));
+                        // setParameter 抛异常说明模型拒绝了本次修改，但 spinbox 已经把
+                        // 新值显示出来并推进了自己的内部状态；不回滚的话界面会与模型不一致。
+                        // QSignalBlocker 阻止 setValue 再发一次 valueChanged，避免递归提交。
+                        QSignalBlocker blocker(spin);
+                        spin->setValue(lastAccepted);
                     }
                 });
     }
@@ -884,8 +900,9 @@ void MainWindow::refreshViewport(bool fitAll)
 // ------------------------------------------------------------
 // 撤销“创建”会让当前选中的 Feature 从 Document 消失，因此必须先修正选择：
 // 优先选中文档末尾仍存在的 Feature；若文档已空，则清空选择和 3D 场景。
+// fitAll：Undo/Redo 传 false 保留相机；新建/打开/导入用默认 true 重新适配视图。
 // ============================================================
-void MainWindow::refreshAfterHistoryChange()
+void MainWindow::refreshAfterHistoryChange(bool fitAll)
 {
     viewport_->cancelPointPick();
     positioningFeatureId_.clear();
@@ -909,7 +926,7 @@ void MainWindow::refreshAfterHistoryChange()
         return;
     }
 
-    refreshViewport();
+    refreshViewport(fitAll); // 是否重新适配视图由调用方决定（Undo/Redo 保持相机）。
 }
 
 void MainWindow::updateRebuildFeedback()
