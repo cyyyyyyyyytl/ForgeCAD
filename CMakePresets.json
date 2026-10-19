@@ -15,7 +15,8 @@
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "C:/Users/15389/vcpkg/scripts/buildsystems/vcpkg.cmake",
         "CMAKE_PREFIX_PATH": "D:/Qt/6.11.2/msvc2022_64",
-        "FORGECAD_BUILD_TESTS": "ON"
+        "FORGECAD_BUILD_TESTS": "ON",
+        "FORGECAD_BUILD_UI_TESTS": "ON"
       }
     },
     {

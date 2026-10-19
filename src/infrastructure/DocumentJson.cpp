@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QStringList>
 #include <QUuid>
 #include <cmath>
 #include <stdexcept>
@@ -17,6 +18,11 @@ int integer(const QJsonValue& v) {
     require(v.isDouble() && std::isfinite(v.toDouble()) && v.toDouble() >= 0 &&
             v.toDouble() <= 1000000000 && std::floor(v.toDouble()) == v.toDouble());
     return static_cast<int>(v.toDouble());
+}
+// encode 只写已知字段；若 decode 静默忽略未知字段，旧版程序打开新版文件再保存就会丢数据。
+// 因此这里与轮廓定义一致，对白名单外的字段直接拒绝。
+void fields(const QJsonObject& o,const QStringList& allowed) {
+    for (auto it=o.begin();it!=o.end();++it) require(allowed.contains(it.key()));
 }
 }
 QByteArray DocumentJson::encode(const application::DocumentData& data) {
@@ -52,6 +58,7 @@ application::DocumentData DocumentJson::decode(const QByteArray& bytes) {
     const auto json = QJsonDocument::fromJson(bytes,&error);
     require(error.error == QJsonParseError::NoError && json.isObject());
     const auto root = json.object();
+    fields(root,{"format","version","documentId","units","sequences","features"});
     application::DocumentData data;
     require(text(root,"format") == "ForgeCAD" && integer(root["version"]) == 1);
     data.documentId = text(root,"documentId").toStdString();
@@ -65,6 +72,7 @@ application::DocumentData DocumentJson::decode(const QByteArray& bytes) {
     require(features.size() <= 10000);
     for (const auto& value : features) {
         require(value.isObject()); const auto item = value.toObject();
+        fields(item,{"id","type","version","parameters","dependencies","definition","geometryAsset","sourceName"});
         application::FeatureData f;
         f.id = text(item,"id").toStdString(); f.type = text(item,"type").toStdString();
         if (item.contains("definition")) {

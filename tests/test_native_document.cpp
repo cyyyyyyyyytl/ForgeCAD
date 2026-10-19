@@ -4,13 +4,36 @@
 #include "geometry/ShapeFactory.h"
 #include "infrastructure/DocumentJson.h"
 #include "infrastructure/NativeDocumentIO.h"
+#include "infrastructure/ZipArchive.h"
 #include <QTemporaryDir>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QUuid>
 #include <limits>
+#include <stdexcept>
+#include <string>
 using forge::application::ModelDocument;
 using forge::infrastructure::NativeDocumentIO;
 using forge::infrastructure::DocumentJson;
+namespace {
+QByteArray minimalDocumentJson() {
+    ModelDocument document;
+    document.createFeature("Box",{{"length",2},{"width",2},{"height",2}});
+    return DocumentJson::encode(document.exportData());
+}
+QJsonObject validManifest() {
+    return QJsonObject{{"format","ForgeCAD"},{"version",1},{"document","document.json"}};
+}
+// 用指定 manifest/document.json 重封 ZIP，用来模拟新版程序写出的包，避免手工拼 ZIP 字节。
+bool writePackage(const QString& path,const QJsonObject& manifest,const QByteArray& document) {
+    const auto bytes=forge::infrastructure::ZipArchive::encode(
+        {{"manifest.json",QJsonDocument(manifest).toJson()},{"document.json",document}});
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write(bytes)==bytes.size();
+}
+}
 
 TEST(NativeDocumentTest, RoundTripRestoresIdentityDependenciesAndIndependentGeometry) {
     ModelDocument original;
@@ -129,4 +152,53 @@ TEST(NativeDocumentTest, PreparedDocumentCommitsOnceAndIsInitiallyClean) {
     EXPECT_NE(target.findFeature("Sphere001"),nullptr);
     EXPECT_EQ(target.exportData().documentId,document.exportData().documentId);
     EXPECT_FALSE(target.isModified()); EXPECT_FALSE(target.canUndo());
+}
+
+TEST(NativeDocumentTest, ManifestCapabilitiesRequireExplicitSupportAndRejectUnknownFields) {
+    QTemporaryDir dir; ASSERT_TRUE(dir.isValid());
+    const auto path=dir.filePath(QStringLiteral("capabilities.forgecad"));
+    const auto document=minimalDocumentJson();
+    const auto identity=DocumentJson::decode(document).documentId;
+    auto manifest=validManifest();
+    // 旧文件没有 requiredCapabilities；空数组表示不要求额外能力，两种都必须能打开。
+    ASSERT_TRUE(writePackage(path,manifest,document));
+    EXPECT_EQ(NativeDocumentIO::load(path).documentId,identity);
+    manifest["requiredCapabilities"]=QJsonArray{};
+    ASSERT_TRUE(writePackage(path,manifest,document));
+    EXPECT_EQ(NativeDocumentIO::load(path).documentId,identity);
+    // 非空能力列表意味着依赖旧程序没有的能力，必须明确拒绝而不是静默忽略。
+    manifest=validManifest(); manifest["requiredCapabilities"]=QJsonArray{QStringLiteral("future-x")};
+    ASSERT_TRUE(writePackage(path,manifest,document));
+    try { NativeDocumentIO::load(path); FAIL()<<"非空 requiredCapabilities 应被拒绝"; }
+    catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("文档要求尚未支持的能力"),std::string::npos);
+    }
+    // 字段存在但不是数组同样属于格式无效。
+    manifest=validManifest(); manifest["requiredCapabilities"]=QStringLiteral("future-x");
+    ASSERT_TRUE(writePackage(path,manifest,document));
+    EXPECT_THROW(NativeDocumentIO::load(path),std::runtime_error);
+    // 未知清单字段不能静默忽略，否则旧程序打开再保存会丢掉这些数据。
+    manifest=validManifest(); manifest["futureManifestField"]=1;
+    ASSERT_TRUE(writePackage(path,manifest,document));
+    try { NativeDocumentIO::load(path); FAIL()<<"未知清单字段应被拒绝"; }
+    catch (const std::runtime_error& error) {
+        EXPECT_NE(std::string(error.what()).find("未知字段"),std::string::npos);
+    }
+}
+
+TEST(NativeDocumentTest, UnknownDocumentAndFeatureJsonFieldsAreRejected) {
+    const auto document=minimalDocumentJson();
+    EXPECT_NO_THROW(DocumentJson::decode(document));
+    auto root=QJsonDocument::fromJson(document).object();
+    auto withRootField=root; withRootField["futureRootField"]=1;
+    EXPECT_THROW(DocumentJson::decode(QJsonDocument(withRootField).toJson()),std::invalid_argument);
+    auto features=root["features"].toArray(); ASSERT_FALSE(features.isEmpty());
+    auto feature=features[0].toObject(); feature["futureFeatureField"]=1;
+    features[0]=feature; root["features"]=features;
+    EXPECT_THROW(DocumentJson::decode(QJsonDocument(root).toJson()),std::invalid_argument);
+    // 打开文件走同一条解码路径，未知字段同样应让 load 拒绝。
+    QTemporaryDir dir; ASSERT_TRUE(dir.isValid());
+    const auto path=dir.filePath(QStringLiteral("unknown.forgecad"));
+    ASSERT_TRUE(writePackage(path,validManifest(),QJsonDocument(root).toJson()));
+    EXPECT_THROW(NativeDocumentIO::load(path),std::invalid_argument);
 }

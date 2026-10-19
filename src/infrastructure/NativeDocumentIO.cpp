@@ -4,13 +4,19 @@
 #include "application/ModelDocument.h"
 #include <QFile>
 #include <QSaveFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QStringList>
 #include <stdexcept>
 
 namespace forge::infrastructure {
 namespace {
 void check(bool ok,const char* message) { if (!ok) throw std::runtime_error(message); }
+// 旧版程序不认识新版清单字段，静默忽略后再保存会丢失这些数据，所以清单也只接受白名单字段。
+void rejectUnknownFields(const QJsonObject& o,const QStringList& allowed,const char* message) {
+    for (auto it=o.begin();it!=o.end();++it) check(allowed.contains(it.key()),message);
+}
 }
 void NativeDocumentIO::save(const application::DocumentData& data,const QString& path) {
     check(!path.trimmed().isEmpty(),"保存路径为空");
@@ -43,7 +49,13 @@ application::DocumentData NativeDocumentIO::load(const QString& path) {
     check(m["format"]=="ForgeCAD" && m["version"].isDouble() && m["version"].toDouble()==1 &&
           m["document"]=="document.json","文档格式或版本不支持");
     check(!m.contains("zipProfile") || m["zipProfile"]=="stored-v1","未知旧文档 ZIP 配置");
-    check(!m.contains("requiredCapabilities"),"文档要求尚未支持的能力");
+    rejectUnknownFields(m,{"format","version","document","zipProfile","requiredCapabilities"},
+                        "文档清单含未知字段");
+    // requiredCapabilities 缺失表示无额外要求；空数组同样合法，只有非空能力列表才需要拒绝。
+    if (m.contains("requiredCapabilities")) {
+        check(m["requiredCapabilities"].isArray(),"文档清单 requiredCapabilities 不是数组");
+        check(m["requiredCapabilities"].toArray().isEmpty(),"文档要求尚未支持的能力");
+    }
     auto data=DocumentJson::decode(entries.at("document.json"));
     for (const auto& [name,payload] : entries)
         if (name!="manifest.json" && name!="document.json") {

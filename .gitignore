@@ -1,8 +1,8 @@
-# 构建产物
-/build/
-/build-feedback/
+# 构建产物（build/、build-feedback/、build-review/ 等临时构建目录）
+build*/
 /stp/
-build/
+*.step
+*.stp
 *.user
 *.suo
 *.VC.db

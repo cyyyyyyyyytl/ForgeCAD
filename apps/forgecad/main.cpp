@@ -17,7 +17,9 @@ int main(int argc, char* argv[])
     // 主窗口是栈对象；事件循环结束后会自动析构并释放其 Qt 子对象和文档。
     MainWindow win;
     // 标题中的版本来自统一 Version 接口，避免界面硬编码与构建版本不一致。
-    win.setWindowTitle(QString("ForgeCAD v%1")
+    // 必须保留 [*] 占位符：QWidget 靠它显示“未保存修改”的星号；若这里写成
+    // 不含 [*] 的标题，main 覆盖后首次修改时窗口就不会出现星号。
+    win.setWindowTitle(QStringLiteral("未命名[*] — ForgeCAD v%1")
         .arg(QString::fromStdString(forge::core::Version::string())));
     win.show(); // QWidget 默认隐藏，显式 show 后才交给窗口系统显示。
 
