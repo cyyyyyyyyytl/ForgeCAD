@@ -9,20 +9,22 @@
 MainWindow ─┐
             ├─> ModelDocument ─> Feature ─> ShapeFactory ─> OCCT Shape
 AI Tools ───┘          │
+                       ├─> CommandManager（Undo/Redo 命令栈）
                        └─> FeatureRegistry
 ```
 
 - `MainWindow`：显示界面，把用户意图交给文档。
 - `ToolRegistry`：检查 AI 工具参数，把合法意图交给文档。
 - `ModelDocument`：拥有所有 Feature，完成创建、修改、删除和 Undo/Redo。
+- `CommandManager`：保存 Undo/Redo 两条命令栈，把一次修改记录成可逆命令；失败操作不进入历史。
 - `FeatureRegistry`：描述可用特征，并创建对应的具体 Feature。
 - `Feature`：保存一个模型对象的参数，通过 `rebuild()` 生成几何形状。
 
 ## 依赖图目前的位置
 
 `DependencyGraph` 保存“哪个 Feature 依赖哪个 Feature”的 ID 关系，并由 `ModelDocument`
-拥有。创建特征会登记节点；`addDependency()` 可登记关系并拒绝循环。依赖关系和特征
-一起进入 Undo/Redo 快照。`topologicalOrder()` 把被依赖者排在使用者之前；删除则先预览
+拥有。创建特征会登记节点；`addDependency()` 可登记关系并拒绝循环。特征、依赖关系和
+文档顺序由 Undo/Redo 命令精确记录与恢复。`topologicalOrder()` 把被依赖者排在使用者之前；删除则先预览
 整组受影响的特征，再按相反顺序一次删除，撤销可一次恢复整组。
 
 AI 删除始终弹确认框；普通界面删除会在存在下游特征时弹框，两处都会列出级联范围。
@@ -46,6 +48,8 @@ auto visibleFeatureIds() const;
 ```
 
 UI 和 AI 不直接增删 `features_`，也不各自实现参数校验。这样只有一条写入路径。
+Undo/Redo 由 Document 内部的 `CommandManager` 完成；上层仍然只调用 `undo()`/`redo()`，
+不需要知道具体是哪条命令。
 
 ## 布尔特征和视图
 
@@ -62,13 +66,13 @@ Agent 在发生修改后的下一次请求前自动提供本机几何反馈，�
 空间规则与 supports_position 让模型在创建关键结构前判断定位与旋转约束；Revolve现支持生成后的世界XYZ平移，保留输入依赖，历史/原生文件均保存这份平移。
 旧文件angle/axis读取补XYZ=0，草图缺plane补XY。Transform提供实体／线框旋转和平移；旋转结果仍无点击定位或视觉反馈。
 
-AdvancedFeature负责Cone、ProfileSketch、Path3D、Transform、Fillet、Chamfer、Sweep、Loft的参数和重建，AdvancedModeling封装OCCT。FeatureDefinition保存顶点／圆弧、路径／经过点和边ID，与数值参数一起进入历史快照和原生JSON。领域层不依赖Qt，DefinitionJson严格编解码，AdvancedTools提供工具入口，AdvancedDialogs提供表格、选边和截面排序界面。创建和定义编辑先验证几何，再提交一次历史；规则选边随上游重选，指定边签名失效时明确报错。
+AdvancedFeature负责Cone、ProfileSketch、Path3D、Transform、Fillet、Chamfer、Sweep、Loft的参数和重建，AdvancedModeling封装OCCT。FeatureDefinition保存顶点／圆弧、路径／经过点和边ID，与数值参数一起进入命令历史和原生JSON。领域层不依赖Qt，DefinitionJson严格编解码，AdvancedTools提供工具入口，AdvancedDialogs提供表格、选边和截面排序界面。创建和定义编辑先验证几何，再提交一次历史；规则选边随上游重选，指定边签名失效时明确报错。
 `ToolRegistry` 与 `ModelDocument` 共享参数规则，返回稳定 ID、输入依赖和重建诊断。
 `AgentController::executeTool` 是网络调用与离线测试共用的确认/刷新入口。
 `UiToolHandler` 把文件、选择、点击定位和相机工具交给 MainWindow，保持窗口与文档层分工。
 
 菜单及对话框自动化测试放在 `forgecad_ui_tests`，通过
-`FORGECAD_BUILD_UI_TESTS=ON` 启用，核心测试与之分开。菜单、对话框和撤销重做测试已通过。
+`FORGECAD_BUILD_UI_TESTS=ON` 启用，核心测试与之分开。菜单、对话框、撤销重做和命令历史测试已通过。
 
 ## 本机运行库修复
 
@@ -87,25 +91,44 @@ MainWindow 或 ToolRegistry
   -> ModelDocument::createFeature
   -> FeatureRegistry::create
   -> BoxFeature / CylinderFeature / SphereFeature
-  -> ModelDocument 保存 Feature
+  -> 校验通过后包装成 CreateFeatureCommand，交给 CommandManager::record
+  -> 命令 execute() 把 Feature 移入文档并登记依赖图
   -> UI 读取 features() 并刷新树和三维视图
 ```
 
-## Undo/Redo 为什么现在使用快照
+创建命令执行失败会抛异常，文档保持原样且不留下历史记录。
 
-每次成功修改前，`ModelDocument` 保存一份只包含 ID、类型和参数的数据快照。
-Undo 恢复上一份快照，Redo 恢复下一份快照。历史记录完全封装在 Document 内部，
-调用方只看到 `undo()` 和 `redo()`。
+## Undo/Redo 为什么现在使用命令栈
 
-这是当前小型模型最容易理解和验证的方案。出现下列情况时，再把 Document 内部替换成
-Command 或增量历史；它的公开接口不需要改变：
+每次修改不再保存整份文档，而是被包装成一条可逆命令。`Command` 只约定三件事：
+`execute(ModelDocument&)`、`undo(ModelDocument&)` 和用于界面提示的 `label()`。
+具体命令在 `ModelCommands.h/.cpp`：
 
-- 单个文档达到数百或数千个复杂特征；
-- 快照内存或恢复时间可以被实际测量为瓶颈；
-- 出现草图依赖、布尔链、装配关系等增量操作。
+- `CreateFeatureCommand`：撤销时命令持有该 Feature 的 `unique_ptr`，重做时再交还文档，
+  因此 ID 和对象地址跨撤销保持稳定；
+- `ModifyParameterCommand`：只存特征 ID、参数名和旧值/新值；
+- `SetDefinitionCommand`：保存结构化定义的旧值/新值；
+- `DeleteFeatureCommand`：级联删除，撤销时按原文档顺序和原依赖恢复整组特征；
+- `AddDependencyCommand`：登记或撤销依赖关系；
+- `CompositeCommand`：把 XYZ 定位、定义加多参数修改等整组合并成一条历史。
 
-恢复快照会重建 Feature 对象，因此不要跨 Undo/Redo 长期保存 `Feature*` 或引用。
-长期身份使用稳定 ID，例如 `Box001`，需要对象时重新调用 `findFeature(id)`。
+`CommandManager` 维护 Undo/Redo 两条栈，每个 `Entry` 保存命令、`revisionBefore` 和
+`revisionAfter`。`record()` 执行命令后压入 Undo 栈并清空 Redo 栈；`undo()` 调用命令
+自己的撤销逻辑并交还 `revisionBefore`，`redo()` 重新执行并回到 `revisionAfter`。
+保存点语义因此保持不变：撤销回到保存点时 `isModified()` 仍为 false。
+
+`ModelDocument` 的公开接口没有变化，命令通过 friend 使用 `insertFeatureRaw`、`takeFeatureRaw`、
+`setFeatureParameterRaw`、`addDependencyRaw` 等私有原语修改内部数据；操作失败会抛异常，
+整次修改回滚且不进入历史。撤销/重做不再重建 Feature 对象，参数编辑后对象地址不变，
+参数值、结构化定义、依赖图和文档顺序都由命令按原状恢复。
+
+当前命令历史没有条数上限，也按 LIFO 假设执行：撤销总是从栈顶开始，不能跳过中间历史
+单独撤销。首次实现只覆盖现有的 ModelDocument 修改 API；`replaceData`/打开文档仍会清空
+历史，整文档快照只保留给打开文件时的事务式替换。
+
+长期身份仍使用稳定 ID，例如 `Box001`。撤销一次创建后对象由命令暂存、暂时不在文档里，
+因此不要假设任意撤销/重做后旧指针仍指向文档中的 Feature，需要对象时重新调用
+`findFeature(id)`；参数编辑这种不移动对象的操作则保持地址不变。
 
 ## 增加一种新特征
 
@@ -125,10 +148,13 @@ Command 或增量历史；它的公开接口不需要改变：
 2. `domain/Feature.h`
 3. `domain/BoxFeature.cpp`
 4. `domain/FeatureRegistry.cpp`
-5. `application/ModelDocument.cpp`
-6. `ui/mainwindow.cpp` 或 `assistant/ToolRegistry.cpp`
+5. `application/Command.h`
+6. `application/CommandManager.cpp`
+7. `application/ModelCommands.cpp`
+8. `application/ModelDocument.cpp`
+9. `ui/mainwindow.cpp` 或 `assistant/ToolRegistry.cpp`
 
-先理解公开接口和一次完整操作，再阅读私有快照实现。
+先理解公开接口和一次完整操作，再阅读公开接口背后的命令栈与私有原语实现。
 
 ## 基本体位置
 
@@ -138,7 +164,7 @@ Box 使用基准角点，Cylinder 使用底面圆心并沿 +Z 构造，Sphere �
 不改变尺寸和拓扑，布尔输入使用定位后的形状。Transform现支持绕指定世界pivot依次XYZ旋转并平移；没有通用局部坐标系对象。
 
 Registry 将位置登记为可选参数，省略任一分量时取零，尺寸仍必填，未知参数被拒绝。
-位置范围 ±1,000,000 mm；尺寸和位置都拒绝 NaN/Infinity。快照保存全部参数，
+位置范围 ±1,000,000 mm；尺寸和位置都拒绝 NaN/Infinity。命令历史保存全部参数，
 不另存视口变换，因此撤销、重做和删除恢复都能保留位置。
 UI 新建与属性面板显示毫米，支持三位小数，参数编辑时保持相机。
 
@@ -155,7 +181,7 @@ OCCT 的错误报告或异常保留在 message 中。每个特征单独处理失
 MainWindow 在一次刷新中共享同一报告：失败和阻塞节点标红，空结果显示单独状态，
 属性区与状态栏给出原因。成功或合法空布尔结果继续隐藏输入；
 失败布尔链则递归显示仍有效的上游，便于检查。参数编辑不重新生成属性控件，保持输入焦点。
-状态不进入快照，修改参数、撤销重做及恢复删除后均重新计算。
+状态不进入历史，修改参数、撤销重做及恢复删除后均重新计算。
 AI 工具额外返回 rebuild_status/rebuild_message，数据写入成功不代表几何生成成功。
 
 原生文件设计见 [native-file-first-steps.md](native-file-first-steps.md)，保存/读取、事务式恢复及界面槽已实现，当前接口、格式限制与验证状态见 [native-file-implementation.md](native-file-implementation.md)。
@@ -189,7 +215,7 @@ ImportedFeature 保存独立复制的原始 B-Rep、来源文件名以及相对�
 Registry 仅提供它的位置参数规则，不允许使用数值参数创建导入对象，AI 也不提供任意文件导入工具。
 导入对象能参与布尔依赖与级联删除，也可随其他最终结果再次导出 STEP。
 
-基本体快照仍保存参数；导入快照额外共享不可变的原始几何，恢复不依赖源文件。
+创建导入对象仍占一条命令历史，Feature 内部共享不可变的原始几何，撤销和重做都不依赖源文件。
 原生文件已保存这些对象的 B-Rep 资产，不依赖来源路径。
 
 MainWindow::on_actionImportStep_triggered 已实现选择文件、取消、错误提示、文档追加与显示刷新。

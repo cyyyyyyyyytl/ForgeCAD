@@ -4,15 +4,15 @@
 
 ## 当前完成度
 
-按原13模块路线图粗略估算约 **60%**，建模、文件、历史、界面和AI工具的演示闭环已打通；增量重建、异步任务、约束求解、性能基准和视觉反馈仍待完成。当前20类特征、37个AI工具，最近206／206测试通过。详见 [逐模块进度与下一阶段](docs/project-status.md)。这个估算不是测试覆盖率，也不代表工业CAD已完成。
+按原13模块路线图粗略估算约 **60%**，建模、文件、历史、界面和AI工具的演示闭环已打通；增量重建、异步任务、约束求解、性能基准和视觉反馈仍待完成。当前20类特征、37个AI工具，最近228项测试全部通过（含命令历史测试）。详见 [逐模块进度与下一阶段](docs/project-status.md)。这个估算不是测试覆盖率，也不代表工业CAD已完成。
 
 ## 扩展造型能力（2026-09-29）
 
 已补齐圆锥／圆台、自定义直线／圆弧轮廓、空间路径、实体／轮廓变换、圆角／倒角、扫掠和放样；草图支持XY/XZ/YZ，旋转加入世界Z轴。全部接入参数、依赖、历史、原生文件和AI。当前 **37个AI工具、20类特征**，可用XZ杯壁轮廓绕Z生成空心杯身，用空间圆弧扫掠杯耳。
 
-代码对话框和槽已完成，Designer已接好8个QAction，真实菜单动作测试验证自动槽连接，详见 [扩展建模与接线清单](docs/advanced-modeling.md)。最新三个Release目标构建成功，206／206测试通过。下面各日期章节保留此前阶段的测试记录。
+代码对话框和槽已完成，Designer已接好8个QAction，真实菜单动作测试验证自动槽连接，详见 [扩展建模与接线清单](docs/advanced-modeling.md)。当时三个Release目标构建成功，206／206测试通过。下面各日期章节保留此前阶段的测试记录。
 
-`build-feedback` 三个Release目标构建成功，最新**206／206测试通过**；覆盖真实菜单动作、新工具、文件／历史及曲线空心杯身＋放样立柱＋扫掠杯耳组成的单实体奖杯。联网模型设计质量和实际渲染观感仍待主程序验收。
+`build-feedback` 三个Release目标构建成功，当时**206／206测试通过**；覆盖真实菜单动作、新工具、文件／历史及曲线空心杯身＋放样立柱＋扫掠杯耳组成的单实体奖杯。联网模型设计质量和实际渲染观感仍待主程序验收。
 
 ## AI 工具与旋转完善（2026-09-29）
 
@@ -42,7 +42,7 @@ Agent 已支持 24 轮/96 次调用预算、停止后的总结与本机进度兜
 ### 已完成
 
 - Box、Cylinder、Sphere 的创建、尺寸及 X/Y/Z 位置修改、树选中和三维显示。
-- ModelDocument 统一管理模型；使用文档快照实现 Undo/Redo。
+- ModelDocument 统一管理模型；当时使用文档快照实现 Undo/Redo（2026-10 已重构为 Command 命令栈）。
 - 特征依赖图、拓扑排序、级联删除：删除被依赖的对象时，同时删除依赖它的结果，一次撤销恢复整组对象。
 - 布尔差集、并集、交集：几何函数、BooleanFeature、文档接口和菜单对话框已接通。
 - 布尔对象记录主体和工具的依赖顺序；修改输入参数会重新计算结果。
@@ -143,15 +143,17 @@ ctest --test-dir build -C Release
 
 ## 当前架构
 
-当前代码刻意保持四个主要角色：
+当前代码刻意保持五个主要角色：
 
 - `src/application/ModelDocument.*`：模型唯一所有者，也是 UI/AI 的建模入口
+- `src/application/CommandManager.*`：Undo/Redo 两条命令栈，命令定义在 `Command.h` 与 `ModelCommands.*`
 - `src/domain/Feature*`：基本体与 BooleanFeature 的参数和重建行为
 - `src/domain/FeatureRegistry.*`：特征参数说明与创建登记
 - `src/ui`、`src/assistant`：两个外部入口，都调用同一个 ModelDocument
 
 先阅读 [`docs/current-architecture.md`](docs/current-architecture.md)。`docs/day*.md` 和
-`docs/undo-redo-implementation-study.md` 记录早期学习过程，其中的 Command 架构已不再使用。
+`docs/undo-redo-implementation-study.md` 记录早期学习过程；其中讨论过的 Command 思路现已由
+`src/application/Command*` 重新落地，当前实现的细节以架构文档为准。
 
 ## AI 建模助手（DeepSeek）
 
@@ -189,7 +191,7 @@ Assistant UI -> AgentController -> DeepSeekClient
 可以直接把下面这段发给下一位助手：
 
 > 请先阅读 D:/ForgeCAD/README.md 和 docs/current-architecture.md，并检查工作区差异。
-> 当前已完成基本体、快照 Undo/Redo、依赖图及级联删除、布尔三种运算和菜单对话框，
-> 最近 105 个测试全部通过。DLL 启动问题已通过本地 FreeType 修复；相关功能已纳入版本管理。
+> 当前已完成基本体、Command 命令栈 Undo/Redo、依赖图及级联删除、布尔三种运算和菜单对话框，
+> 最近 228 项测试全部通过。DLL 启动问题已通过本地 FreeType 修复；相关功能已纳入版本管理。
 > 后续默认带我分小步写代码，测试你负责；只有我明确要求代写时才直接改功能文件。
 > 对象 X/Y/Z 位置参数已实现并覆盖负坐标、布尔更新和 Undo/Redo；几何失败反馈也已完成，下一步按 docs/native-file-first-steps.md 学习原生文件。

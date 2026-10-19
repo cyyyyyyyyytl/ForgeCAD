@@ -9,6 +9,36 @@
 
 ---
 
+## 2026-10-19 Undo/Redo 从整文档快照重构为 Command 命令栈（228/228）
+
+### 目标
+按真实 CAD 的增量历史思路，去掉“每次修改保存整份文档快照”的开销，改成可逆命令。
+
+### 已完成
+- 新增 `src/application/Command.h`（execute/undo/label 三接口）、`CommandManager.h/.cpp`（Undo/Redo 双栈 + revisionBefore/After）。
+- 新增 `src/application/ModelCommands.h/.cpp`：CreateFeatureCommand、ModifyParameterCommand、SetDefinitionCommand、DeleteFeatureCommand、AddDependencyCommand、CompositeCommand。
+- `ModelDocument` 公开接口保持不变；内部改为“校验 → 生成命令 → CommandManager::record”；私有原语 insertFeatureRaw/takeFeatureRaw/setFeatureParameterRaw/setFeatureDefinitionRaw/addDependencyRaw/removeDependencyRaw 供命令 friend 访问。
+- `DependencyGraph` 补充 removeNode / removeDependency；`FeatureDefinition` 增加默认相等比较，供“定义是否真的变化”判断。
+- 撤销/重做不再重建 Feature：参数/位置编辑后对象地址不变；创建撤销时对象由命令暂存，重做插回原 ID、原文档顺序和原依赖；级联删除撤销按原顺序与原依赖整体恢复。
+- revision 与保存点语义保持：撤销回保存点 `isModified()` 仍为 false；新命令清空 Redo 分支；replaceData/打开文档清空历史。
+- 文档同步：`docs/current-architecture.md`、`docs/project-status.md`、`README.md`、`docs/advanced-modeling.md` 的“快照”表述改为命令历史；本日志。
+- 新增 `tests/test_command_history.cpp` 12 项契约测试（单条历史、指针稳定、创建/删除/依赖撤销、失败不入栈、保存点、replaceData、空栈、定义编辑）。
+
+### 验证
+- `build-feedback` 三个 Release 目标构建成功；`ctest` **228/228 通过**（原 216 + 命令历史 12），约 31.6 s。
+- 主程序启动烟测通过（8 s 存活后正常结束）。
+
+### 决策与限制
+- 命令按 LIFO 执行，不能跳过中间历史单独撤销；历史暂无条数上限与合并策略。
+- 命令的 execute/undo 假定处于自己上次离开的状态，由栈顺序保证；复合命令的原子性依赖执行前校验。
+- 整文档快照结构只保留给打开文件时的事务式替换，不再进入历史。
+
+### 下一步
+- 视需要增加历史条数上限/命令合并（连续参数拖动）、按条撤销或历史面板。
+- 继续原路线：增量重建缓存与性能基准、异步任务系统。
+
+---
+
 ## 2026-09-19 全项目手写 C++ 教学注释完善（45/45）
 
 ### 已完成
